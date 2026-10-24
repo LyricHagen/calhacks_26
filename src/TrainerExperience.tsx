@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ADC_MAX, EMPTY, NineSensorDetector, NineSensorProtocol,
   SENSOR_NAMES, type ActionType, type DetectedAction, type NineFrame, type NineReadings,
   type SensorId,
 } from './trainerLab/sensors';
+import {
+  calibratedCount,
+  emptySpatialSamples,
+  estimatePlacement,
+  hasSpatialCalibration,
+  signalPattern,
+  simulatedContact,
+  SPATIAL_REFERENCES,
+  type SpatialEstimate,
+  type SpatialRegion,
+  type SpatialSamples,
+} from './trainerLab/spatialModel';
 
 type Mode = 'train' | 'calibrate' | 'test';
 type Scenario = 'severe' | 'cough' | 'unresponsive';
@@ -12,7 +24,7 @@ type Tone = 'neutral' | 'success' | 'warning';
 type Connection = 'demo' | 'connecting' | 'live' | 'error';
 type Feedback = { tone: Tone; heading: string; detail: string };
 type Counts = { back: number; front: number; cpr: number; correct: number; errors: number; rounds: number };
-type History = { time: string; label: string; verdict: string; good: boolean; peak: number };
+type History = { time: string; label: string; verdict: string; good: boolean; peak: number; placementScore: number | null };
 
 type SerialPort = {
   open: (options: { baudRate: number }) => Promise<void>;
@@ -22,13 +34,6 @@ type SerialPort = {
 type SerialNavigator = Navigator & { serial?: { requestPort: () => Promise<SerialPort> } };
 
 const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 0, rounds: 0 };
-// Start-to-start pacing window for back blows or abdominal thrusts. Training pace, not an AHA figure.
-const MIN_INTERVAL_MS = 1000;
-const MAX_INTERVAL_MS = 3000;
-// A hit must peak at least this many ADC counts above baseline to be a firm blow or thrust.
-// Lighter hits still register as contact but are left out of pacing.
-const FIRM_PEAK = 2000;
-const noLastStart = (): Record<ActionType, number> => ({ back: -Infinity, front: -Infinity, cpr: -Infinity });
 const SENSOR_GROUPS = [
   { name: 'ABDOMEN', ids: [0, 1, 2, 3, 4] },
   { name: 'BACK', ids: [5, 6, 7] },
@@ -70,10 +75,11 @@ function Usb() {
 }
 
 function BodyDiagram({
-  view, active, target, onSensor, cpr, flash, wrong,
+  view, active, target, onSensor, cpr, flash, wrong, heatmap,
 }: {
   view: View; active: SensorId | null; target: SensorId | null;
   onSensor: (id: SensorId) => void; cpr: boolean; flash: number; wrong: boolean;
+  heatmap: SpatialEstimate | null;
 }) {
   const coords = view === 'front' ? FRONT_COORDS : BACK_COORDS;
   const focusY = view === 'back' ? 190 : cpr ? 182 : 292;
@@ -128,6 +134,28 @@ function BodyDiagram({
         <path d="M121 364 Q182 380 246 364 L248 381 Q186 394 119 381Z" fill="#718780" opacity=".65" />
       </g>
 
+      <clipPath id="heatmapBodyClip">
+        <path d="M126 115 C139 128 159 137 184 137 Q225 138 243 115 C260 135 270 163 265 210 Q254 257 253 292 L245 368 Q184 385 121 368 L114 293 Q109 254 102 212 C96 167 105 136 126 115Z" />
+      </clipPath>
+      {heatmap && <g clipPath="url(#heatmapBodyClip)" className="spatial-heatmap">
+        {heatmap.cells.filter(cell => cell.probability > 0.05).map(cell => (
+          <rect
+            key={`${cell.x}-${cell.y}`}
+            x={cell.x - heatmap.cellSize / 2}
+            y={cell.y - heatmap.cellSize / 2}
+            width={heatmap.cellSize + 0.6}
+            height={heatmap.cellSize + 0.6}
+            fill={cell.probability > 0.66 ? '#ef7544' : cell.probability > 0.30 ? '#e6b64d' : '#12a991'}
+            opacity={Math.min(0.85, Math.pow(cell.probability, 0.7) * 0.78)}
+          />
+        ))}
+        <circle
+          cx={heatmap.estimate.x}
+          cy={heatmap.estimate.y}
+          r="4"
+          className="estimate-centre"
+        />
+      </g>}
       {coords.map(({ id, x, y }) => {
         const isTarget = id === target || (cpr && id === 8);
         const isActive = id === active;
@@ -204,6 +232,10 @@ export function TrainerExperience() {
   const [testTouched, setTestTouched] = useState<SensorId[]>([]);
   const [framesReceived, setFramesReceived] = useState(0);
   const [simBusy, setSimBusy] = useState(false);
+  const [spatialSamples, setSpatialSamples] = useState<SpatialSamples>(emptySpatialSamples);
+  const [calibrationMessage, setCalibrationMessage] = useState('Capture reference patterns at the marked positions.');
+  const [recentPattern, setRecentPattern] = useState<{ region: SpatialRegion; values: NineReadings } | null>(null);
+  const [lastPlacement, setLastPlacement] = useState<SpatialEstimate | null>(null);
 
   const detector = useRef(new NineSensorDetector());
   const protocol = useRef(new NineSensorProtocol());
@@ -220,7 +252,7 @@ export function TrainerExperience() {
   const simBusyRef = useRef(false);
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastStart = useRef(noLastStart());
+  const spatialSamplesRef = useRef(spatialSamples);
   const mounted = useRef(true);
 
   scenarioRef.current = scenario;
@@ -228,6 +260,7 @@ export function TrainerExperience() {
   countsRef.current = counts;
   baselineRef.current = baseline;
   thresholdRef.current = threshold;
+  spatialSamplesRef.current = spatialSamples;
   const phase = scenario === 'severe' ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review') : scenario === 'unresponsive' ? 'cpr' : 'cough';
   const recommended: SensorId | null = phase === 'back' ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 8 : null;
   const defaultView: View = phase === 'back' ? 'back' : 'front';
@@ -238,101 +271,130 @@ export function TrainerExperience() {
   }, { value: 0, id: null }).id;
   const liveSensor = active !== null ? SENSOR_NAMES[active] : 'No pressure detected';
 
-  function getCorrection(sensor: SensorId): string {
-    switch (sensor) {
-      case 1: return 'Too high. Move your fist lower, away from the breastbone.';
-      case 2: return 'Too low. Move above the navel and below the breastbone.';
-      case 3: return 'Too far to the left. Move towards the centre of the abdomen.';
-      case 4: return 'Too far to the right. Move towards the centre of the abdomen.';
-      case 6: return 'Too far left in the back view. Move towards the centre, between the shoulder blades.';
-      case 7: return 'Too far right in the back view. Move towards the centre, between the shoulder blades.';
-      default: return 'Contact was outside the target. Follow the highlighted position.';
-    }
-  }
-
   function evaluate(event: DetectedAction) {
-    const sc = scenarioRef.current;
-    const curr = { ...countsRef.current };
+    const scenarioNow = scenarioRef.current;
+    const nextCounts = { ...countsRef.current };
     let result: Feedback;
     let good = false;
-    let light = false;
-    if (sc === 'cough') {
-      result = { tone: 'warning', heading: 'No intervention needed yet', detail: 'A strong, effective cough should be encouraged and monitored. Only intervene if the obstruction becomes severe.' };
-    } else if (sc === 'unresponsive') {
+    let placement: SpatialEstimate | null = null;
+    let ambiguous = false;
+
+    if (event.type === 'front' || event.type === 'back') {
+      placement = estimatePlacement(
+        event.type,
+        event.pattern,
+        baselineRef.current,
+        spatialSamplesRef.current,
+      );
+      setRecentPattern({ region: event.type, values: event.pattern });
+    }
+
+    setLastPlacement(placement);
+
+    if (scenarioNow === 'cough') {
+      result = {
+        tone: 'warning',
+        heading: 'Pause physical intervention',
+        detail: 'Encourage an effective cough and monitor. Back blows and abdominal thrusts are for severe obstruction.',
+      };
+    } else if (scenarioNow === 'unresponsive') {
       good = event.type === 'cpr' && event.sensor === 8;
+
       if (good) {
-        curr.cpr += 1;
-        result = { tone: 'success', heading: 'Sternum target contacted', detail: 'Central chest contact registered. This does not measure compression depth, rate, or CPR effectiveness.' };
-      } else {
-        result = { tone: 'warning', heading: 'Move to the sternum', detail: 'This scenario uses the single highlighted sternum sensor. Place your hands in the centre of the chest.' };
+        nextCounts.cpr += 1;
       }
+
+      result = good
+        ? {
+            tone: 'success',
+            heading: 'Sternum contact recorded',
+            detail: 'Hand placement contact detected. This does not measure CPR compression depth or effectiveness.',
+          }
+        : {
+            tone: 'warning',
+            heading: 'Move to the sternum',
+            detail: 'Use the single central sternum sensor for this CPR placement scenario.',
+          };
     } else {
-      const expected = curr.back < 5 ? 'back' : curr.front < 5 ? 'front' : 'review';
-      const isTarget = expected === 'back' ? event.sensor === 5 : expected === 'front' ? event.sensor === 0 : false;
-      // event.peak is already measured above baseline, like the threshold.
-      const firm = event.peak >= FIRM_PEAK;
-      const start = event.time - event.durationMs;
-      const sinceLast = start - lastStart.current[event.type];
-      if (firm) lastStart.current[event.type] = start;
-      const tooFast = event.type === expected && sinceLast < MIN_INTERVAL_MS;
-      // The first hit of a set has no previous start (sinceLast is Infinity), so it is never slow.
-      const tooSlow = event.type === expected && Number.isFinite(sinceLast) && sinceLast > MAX_INTERVAL_MS;
+      const expected: SpatialRegion | 'review' =
+        nextCounts.back < 5 ? 'back' : nextCounts.front < 5 ? 'front' : 'review';
+
       if (expected === 'review') {
-        result = { tone: 'neutral', heading: 'Practice round complete', detail: 'You completed five back contacts and five abdominal contacts. If the person is still responsive and obstructed, another round is needed; this simulator cannot tell whether the object was removed.' };
-      } else if (!firm) {
-        // Not a real blow or thrust: neither counted nor an error.
-        light = true;
         result = {
-          tone: 'neutral', heading: 'Too light — not counted',
-          detail: `That contact reached ${event.peak} above resting; a ${expected === 'back' ? 'back blow' : 'thrust'} needs ${FIRM_PEAK} to count. Use a firmer, deliberate motion.`,
+          tone: 'neutral',
+          heading: 'Practice round complete',
+          detail: 'Reassess the scenario. A completed training sequence does not establish that the airway has cleared.',
         };
-      } else if (tooFast) {
+      } else if (event.type !== expected) {
         result = {
-          tone: 'warning', heading: 'Too fast — not counted',
-          detail: `That ${expected === 'back' ? 'back blow' : 'thrust'} came ${(sinceLast / 1000).toFixed(1)} s after the last one. Make each one separate and deliberate: pause, reset your position, then go again.`,
+          tone: 'warning',
+          heading: 'Wrong action for this step',
+          detail: expected === 'back'
+            ? 'Practise a back blow between the shoulder blades before abdominal thrusts.'
+            : 'Practise an abdominal thrust above the navel and below the breastbone.',
         };
-      } else if (isTarget) {
+      } else if (!placement) {
+        ambiguous = true;
+        result = {
+          tone: 'neutral',
+          heading: 'Contact unclear — try again',
+          detail: 'Not enough sensor response to estimate placement reliably. Reposition and repeat.',
+        };
+      } else if (placement.uncertainty === 'broad') {
+        ambiguous = true;
+        result = {
+          tone: 'neutral',
+          heading: 'Placement uncertain',
+          detail: `${placement.correction} Spatial calibration can improve the model.`,
+        };
+      } else if (placement.score >= 50) {
         good = true;
-        if (expected === 'back') curr.back += 1;
-        else curr.front += 1;
-        const n = expected === 'back' ? curr.back : curr.front;
-        const ending = n === 5;
-        result = {
-          tone: 'success', heading: ending ? 'Set complete — well placed' : 'Good location — contact recorded',
-          detail: ending && expected === 'back' ? 'Five target back contacts recorded. Now practise abdominal thrust placement on the front view.' : ending ? 'You have completed this simulated round. Continue if the person remains responsive and obstructed.' : `${n} of 5 ${expected === 'back' ? 'back blows' : 'abdominal thrusts'} recorded at the target sensor. Keep following the highlighted target.`
-        };
-        if (tooSlow) {
-          result = {
-            tone: 'warning', heading: 'Counted — but keep the pace up',
-            detail: `Good placement, but ${(sinceLast / 1000).toFixed(1)} s passed since the last one. In a real emergency, keep going without long pauses. ${result.detail}`,
-          };
-        }
-      } else {
-        if (event.type !== expected) {
-          result = {
-            tone: 'warning',
-            heading: 'Wrong action for this step',
-            detail: expected === 'back'
-              ? 'Practise a back blow first. Aim at the centre between the shoulder blades.'
-              : 'Practise an abdominal thrust now. Aim above the navel, below the breastbone.',
-          };
+
+        if (expected === 'back') {
+          nextCounts.back += 1;
         } else {
-          result = {
-            tone: 'warning',
-            heading: 'Adjust your placement',
-            detail: getCorrection(event.sensor),
-          };
+          nextCounts.front += 1;
         }
+
+        const current = expected === 'back' ? nextCounts.back : nextCounts.front;
+
+        result = {
+          tone: 'success',
+          heading: 'Estimated placement on target',
+          detail: `${current} of 5 ${expected === 'back' ? 'back contacts' : 'abdominal contacts'} recorded. ` +
+            `Model target score: ${Math.round(placement.score)}/100. ` +
+            (current === 5 && expected === 'back'
+              ? 'Now move to the abdomen for the next part of the practice sequence.'
+              : 'Follow the next highlighted action.'),
+        };
+      } else {
+        result = {
+          tone: 'warning',
+          heading: 'Adjust placement and retry',
+          detail: `${placement.correction} Estimated target score: ${Math.round(placement.score)}/100.`,
+        };
       }
     }
-    if (good) curr.correct += 1;
-    else if (!light) curr.errors += 1;
-    countsRef.current = curr;
-    setCounts(curr);
+
+    if (good) {
+      nextCounts.correct += 1;
+    } else if (!ambiguous) {
+      nextCounts.errors += 1;
+    }
+
+    countsRef.current = nextCounts;
+    setCounts(nextCounts);
     setFeedback(result);
-    const item: History = { time: prettyTime(), label: SENSOR_NAMES[event.sensor], verdict: result.heading, good, peak: event.peak };
-    setHistory(prev => [item, ...prev].slice(0, 12));
-    setFlash(v => v + 1);
+    setHistory(previous => [{
+      time: prettyTime(),
+      label: event.type === 'cpr' ? SENSOR_NAMES[event.sensor] : `${event.type} pressure pattern`,
+      verdict: result.heading,
+      good,
+      peak: event.peak,
+      placementScore: placement ? Math.round(placement.score) : null,
+    }, ...previous].slice(0, 12));
+
+    setFlash(value => value + 1);
     setRecentContact({ sensor: event.sensor, correct: good });
 
     if (contactTimer.current) {
@@ -341,10 +403,12 @@ export function TrainerExperience() {
 
     contactTimer.current = setTimeout(() => {
       setRecentContact(null);
+      setRecentPattern(null);
+      setLastPlacement(null);
       contactTimer.current = null;
-    }, 650);
+    }, 1300);
 
-    if (good && sc === 'severe' && curr.back === 5 && curr.front === 0) {
+    if (good && scenarioNow === 'severe' && nextCounts.back === 5 && nextCounts.front === 0) {
       setViewOverride(null);
     }
   }
@@ -372,11 +436,12 @@ export function TrainerExperience() {
     if (simTimer.current) clearTimeout(simTimer.current);
     simBusyRef.current = false; setSimBusy(false);
     detector.current.reset();
-    lastStart.current = noLastStart();
     countsRef.current = { ...INITIAL_COUNTS };
     setCounts({ ...INITIAL_COUNTS });
     setHistory([]);
     setRecentContact(null);
+    setRecentPattern(null);
+    setLastPlacement(null);
 
     if (contactTimer.current) {
       clearTimeout(contactTimer.current);
@@ -394,8 +459,15 @@ export function TrainerExperience() {
   function simulate(ids: SensorId[]) {
     if (connection === 'live' || simBusyRef.current) return;
     simBusyRef.current = true; setSimBusy(true);
-    const pressed = empty();
-    ids.forEach(id => { pressed[id] = Math.min(ADC_MAX, baselineRef.current[id] + Math.max(FIRM_PEAK + 300, thresholdRef.current + 750)); });
+    const pressed = ids.length === 1
+      ? simulatedContact(ids[0], baselineRef.current, 2800)
+      : empty();
+
+    if (ids.length !== 1) {
+      ids.forEach(id => {
+        pressed[id] = Math.min(ADC_MAX, baselineRef.current[id] + 2800);
+      });
+    }
     processFrameRef.current({ readings: pressed, peaks: pressed, deviceTimeMs: null });
     simTimer.current = setTimeout(() => {
       const resting = [...baselineRef.current] as NineReadings;
@@ -482,22 +554,69 @@ export function TrainerExperience() {
     baselineRef.current = newBaseline;
     setBaseline(newBaseline);
     detector.current.reset();
+    spatialSamplesRef.current = emptySpatialSamples();
+    setSpatialSamples(spatialSamplesRef.current);
     setCalibrated(true);
     setFeedback({ tone: 'success', heading: 'Resting baseline captured', detail: 'Nine-channel baseline saved for this session. Validate each sensor individually in Sensor Test and adjust sensitivity as necessary.' });
+  }
+
+  function captureSpatialReference(region: SpatialRegion, id: SensorId) {
+    const reference = connection === 'live'
+      ? (() => {
+          const window = readingWindow.current.slice(-15);
+          const values = empty();
+
+          for (let index = 0; index < 9; index++) {
+            values[index] = Math.max(
+              baselineRef.current[index],
+              ...window.map(row => row[index]),
+            );
+          }
+
+          return values;
+        })()
+      : simulatedContact(id, baselineRef.current);
+
+    const pattern = signalPattern(reference, baselineRef.current, region);
+
+    if (Math.max(...pattern) < thresholdRef.current) {
+      setCalibrationMessage('No clear contact recorded. Hold pressure at the labelled location and try again.');
+      return;
+    }
+
+    const updated: SpatialSamples = {
+      ...spatialSamplesRef.current,
+      [region]: {
+        ...spatialSamplesRef.current[region],
+        [id]: pattern,
+      },
+    };
+
+    spatialSamplesRef.current = updated;
+    setSpatialSamples(updated);
+    setCalibrationMessage(
+      `${SENSOR_NAMES[id]} saved. ${hasSpatialCalibration(region, updated)
+        ? 'Spatial calibration is ready for this region.'
+        : 'Capture the remaining labelled locations to complete calibration.'}`,
+    );
   }
 
   function nextRound() {
     const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
     countsRef.current = next; setCounts(next);
-    detector.current.reset(); lastStart.current = noLastStart(); setViewOverride(null);
+    detector.current.reset(); setViewOverride(null);
     setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
   }
 
   function downloadSummary() {
     const data = {
-      product: 'ChokeSense', exportedAt: new Date().toISOString(),
+      product: 'ThrustWorthy', exportedAt: new Date().toISOString(),
       scenario, connection, counts, thresholdADCAboveBaseline: threshold,
       baseline, events: history,
+      spatialCalibration: {
+        frontReferences: calibratedCount('front', spatialSamples),
+        backReferences: calibratedCount('back', spatialSamples),
+      },
       note: 'Training demonstration. FSR signals do not measure clinical force, CPR depth, or obstruction clearance.',
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
@@ -512,15 +631,46 @@ export function TrainerExperience() {
   if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; description = 'An effective cough can clear a mild obstruction. Monitor closely for worsening signs; do not deliver back blows or abdominal thrusts while coughing remains effective.'; guide = 'No sensor contact needed in this scenario'; }
   if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; description = 'Activate emergency response and practise central chest hand placement on the single sternum sensor. Contact alone does not validate CPR quality.'; guide = 'Target: centre of chest over the sternum'; }
 
-  const activeWrong = active !== null && (scenario === 'cough' || (phase === 'back' && active !== 5) || (phase === 'front' && active !== 0) || (phase === 'cpr' && active !== 8));
+  const heatmapRegion: SpatialRegion = view;
+  const hasLiveRegionSignal = SPATIAL_REFERENCES[heatmapRegion].some(
+    ({ id }) => readings[id] - baseline[id] >= Math.max(40, threshold * 0.2),
+  );
+  const heatmapInput = hasLiveRegionSignal
+    ? readings
+    : recentPattern?.region === heatmapRegion
+      ? recentPattern.values
+      : null;
+
+  const spatialHeatmap = useMemo(
+    () => heatmapInput
+      ? estimatePlacement(heatmapRegion, heatmapInput, baseline, spatialSamples)
+      : null,
+    [heatmapRegion, heatmapInput, baseline, spatialSamples],
+  );
+
+  const visiblePlacement = spatialHeatmap ?? lastPlacement;
+
+  const phaseRegion: SpatialRegion | null =
+    phase === 'front' || phase === 'back' ? phase : null;
+  const activeRegion: SpatialRegion | 'cpr' | null = active === null
+    ? null
+    : active <= 4 ? 'front' : active <= 7 ? 'back' : 'cpr';
+  const livePhaseEstimate = phaseRegion && activeRegion === phaseRegion
+    ? estimatePlacement(phaseRegion, readings, baseline, spatialSamples)
+    : null;
+  const activeWrong = active !== null && (
+    scenario === 'cough' ||
+    (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < 50)) ||
+    (phase === 'cpr' && active !== 8)
+  );
   const activeHint = active !== null
     ? scenario === 'cough'
-      ? 'Pause — an effective cough does not call for back blows or abdominal thrusts.'
-      : activeWrong
-        ? phase === 'back' && (active === 6 || active === 7) || phase === 'front' && (active >= 1 && active <= 4)
-          ? getCorrection(active)
-          : 'Wrong action for this step. Follow the highlighted target.'
-        : 'Target contacted — release to record the action.'
+      ? 'An effective cough does not require physical intervention.'
+      : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
+        ? `${Math.round(livePhaseEstimate.score)}/100 estimated target likelihood. ${livePhaseEstimate.correction} Release to register the action.`
+        : activeWrong
+          ? 'Wrong region for this step. Follow the highlighted target.'
+          : 'Contact detected. Release to register the action.'
     : null;
 
   const diagramSensor = active ?? recentContact?.sensor ?? null;
@@ -530,7 +680,7 @@ export function TrainerExperience() {
     <header className="topbar">
       <div className="brand"><Logo />
         <div>
-          <strong>ChokeSense</strong>
+          <strong>ThrustWorthy</strong>
           <span>Hands-on first-aid learning</span></div></div>
       <div className="top-actions">
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
@@ -552,9 +702,9 @@ export function TrainerExperience() {
       </div>
       <div className="modebar" aria-label="Trainer modes">
         <div className="mode-tabs" role="tablist" aria-label="Training tools">
-          <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('train'); }}>Guided training</button>
-          <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('calibrate'); }}>Calibrate</button>
-          <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('test'); }}>Sensor test</button>
+          <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('train'); }}>Guided training</button>
+          <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('calibrate'); }}>Calibrate</button>
+          <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('test'); }}>Sensor test</button>
         </div>
         <span className="mode-status">{connection === 'live' ? 'LIVE INPUT' : 'SIMULATION MODE'}</span>
       </div>
@@ -613,9 +763,9 @@ export function TrainerExperience() {
               <div className="view-switch">
                 <button type="button" className={view === 'back' ? 'on' : ''} onClick={() => setViewOverride('back')}>Back</button>
                 <button type="button" className={view === 'front' ? 'on' : ''} onClick={() => setViewOverride('front')}>Front</button></div></div>
-            <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} />
+            <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap} />
             <div className="mannequin-guide">
-              <span className="legend-dot" /> Highlighted area = current target. Back left and right are shown from the back-facing view.</div>
+              <span className="legend-dot" /> Estimated contact likelihood from all sensors in this view. Back left/right are from the back-facing view.</div>
           </article>
           <article className="coach-panel">
             <div className="coach-title">
@@ -630,6 +780,20 @@ export function TrainerExperience() {
                 <strong>{activeHint ? activeWrong ? 'Adjust your placement' : 'Contact detected' : feedback.heading}</strong>
                 <p>{activeHint ?? feedback.detail}</p></div>
             </div>
+            {visiblePlacement && scenario === 'severe' && <div className="spatial-score">
+              <div className="spatial-score-head">
+                <span>Estimated target-region likelihood</span>
+                <strong>{Math.round(visiblePlacement.score)}/100</strong>
+              </div>
+              <div className="spatial-track"><span style={{ width: `${visiblePlacement.score}%` }} /></div>
+              <div className="spatial-score-note">
+                {visiblePlacement.calibrated ? 'Spatial references calibrated' : 'Uncalibrated preview model'}
+                {' · '}
+                {visiblePlacement.uncertainty} spatial certainty
+              </div>
+              <p>{visiblePlacement.correction}</p>
+              <small>Model-derived placement only. This is not a measured force or a clinically validated probability.</small>
+            </div>}
             <div className="live-readout">
               <span className="readout-label">LIVE SENSOR</span>
               <strong>{liveSensor}</strong>
@@ -674,7 +838,7 @@ export function TrainerExperience() {
             <span>{history.length ? history[0].verdict : 'Use the highlighted target to start your first practice.'}</span></div>
           <div className="summary-controls">
             <button type="button" className="button-outline small" onClick={downloadSummary}>Export results ↓</button>
-            <button type="button" className="button-outline small" onClick={() => { detector.current.reset(); setMode('test'); }}>Check sensors →</button></div></section>
+            <button type="button" className="button-outline small" onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('test'); }}>Check sensors →</button></div></section>
       </>}
 
       {mode === 'calibrate' && <section className="tool-layout">
@@ -710,6 +874,36 @@ export function TrainerExperience() {
             <span>{name}</span>
             <strong>{baseline[i]}</strong></div>)}
           </div>
+          <div className="spatial-calibration">
+            <div className="workspace-head compact">
+              <h3>Spatial reference calibration</h3>
+              <span>Improves the multi-sensor placement model</span>
+            </div>
+            <p className="tiny-note">For each labelled location, apply pressure there and click Capture while holding it. In Demo mode, buttons generate clearly labelled synthetic references. Calibrate each position on the actual mannequin before trusting physical feedback.</p>
+            {(['back', 'front'] as const).map(region => (
+              <div key={region} className="spatial-cal-group">
+                <div className="spatial-cal-group-header">
+                  <strong>{region === 'back' ? 'Back placement' : 'Abdominal placement'}</strong>
+                  <span>{calibratedCount(region, spatialSamples)}/{SPATIAL_REFERENCES[region].length} references</span>
+                </div>
+                {SPATIAL_REFERENCES[region].map(reference => (
+                  <div key={reference.id} className="spatial-cal-row">
+                    <span>{SENSOR_NAMES[reference.id]}</span>
+                    <button type="button" className="button-outline small" onClick={() => captureSpatialReference(region, reference.id)}>
+                      {spatialSamples[region][reference.id] ? 'Recapture' : connection === 'live' ? 'Capture' : 'Simulate'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="cal-status" role="status">{calibrationMessage}</div>
+            <button type="button" className="button-outline small" onClick={() => {
+              const cleared = emptySpatialSamples();
+              spatialSamplesRef.current = cleared;
+              setSpatialSamples(cleared);
+              setCalibrationMessage('Spatial references cleared.');
+            }}>Clear spatial references</button>
+          </div>
           <div className="tip-line">ⓘ Repeat calibration after repositioning the hardware or changing resistor wiring. Calibrate medical technique separately with an instructor.</div></div></section>}
 
       {mode === 'test' && <section className="tool-layout">
@@ -741,7 +935,7 @@ export function TrainerExperience() {
 
       <footer className="footer">
         <div>
-          <span className="footer-logo">✳</span> ChokeSense <span className="footer-sep">·</span> Demo training prototype</div>
+          <span className="footer-logo">✳</span> ThrustWorthy <span className="footer-sep">·</span> Demo training prototype</div>
         <p>Adult scenarios based on AHA 2025 guidance. Not medical certification, not for use during an emergency. FSRs detect contact, not clinically effective force or compression depth.</p><a href="https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support" target="_blank" rel="noreferrer">Training reference ↗</a></footer>
     </main>
   </div>;

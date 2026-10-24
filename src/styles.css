@@ -1667,3 +1667,142 @@ a {
 .scenario-buttons button:last-child {
   opacity: .8;
 }
+
+.spatial-heatmap {
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  transition: opacity 160ms ease;
+}
+
+.estimate-centre {
+  fill: #ffffff;
+  stroke: #173f3d;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85));
+}
+
+.body-pad {
+  fill-opacity: 0.28;
+  stroke-opacity: 0.5;
+}
+
+.body-pad.is-target,
+.body-pad.is-active,
+.body-pad.is-wrong {
+  fill-opacity: 0.88;
+  stroke-opacity: 1;
+}
+
+.spatial-score {
+  padding: 14px 15px;
+  border-radius: 12px;
+  border: 1px solid #dceae3;
+  background: #f8fcf9;
+  margin-top: 16px;
+}
+
+.spatial-score-head,
+.spatial-cal-group-header,
+.spatial-cal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spatial-score-head span {
+  color: #496b5f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.spatial-score-head strong {
+  color: #117d67;
+  font-size: 23px;
+  letter-spacing: -0.04em;
+}
+
+.spatial-track {
+  overflow: hidden;
+  height: 8px;
+  background: #e0eee6;
+  border-radius: 999px;
+  margin: 11px 0 8px;
+}
+
+.spatial-track > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #f6b75b, #15af8c);
+  border-radius: inherit;
+  transition: width 180ms ease;
+}
+
+.spatial-score-note {
+  color: #66867a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.spatial-score p {
+  color: #345d50;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 10px 0 6px;
+}
+
+.spatial-score small {
+  color: #80978c;
+  font-size: 9px;
+  line-height: 1.5;
+  display: block;
+}
+
+.spatial-calibration {
+  border-top: 1px solid #e0eae4;
+  padding-top: 18px;
+  margin-top: 20px;
+}
+
+.spatial-cal-group {
+  border: 1px solid #e0eae4;
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.spatial-cal-group-header {
+  background: #f4faf6;
+  padding: 13px 14px;
+}
+
+.spatial-cal-group-header strong {
+  font-size: 12px;
+}
+
+.spatial-cal-group-header span {
+  color: #5c8975;
+  font-size: 11px;
+}
+
+.spatial-cal-row {
+  padding: 9px 14px;
+  border-top: 1px solid #edf1ee;
+  font-size: 11px;
+}
+
+.spatial-cal-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.spatial-cal-row button {
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spatial-heatmap,
+  .spatial-track > span {
+    transition: none;
+  }
+}

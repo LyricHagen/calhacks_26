@@ -48,6 +48,7 @@ export type DetectedAction = {
   time: number;
   durationMs: number;
   bothCpr: boolean;
+  pattern: NineReadings;
 };
 
 export type NineFrame = {
@@ -192,6 +193,7 @@ type DetectorState = {
   active: boolean;
   peak: number;
   best: SensorId;
+  pattern: NineReadings;
   started: number;
   lastEnd: number;
 };
@@ -201,6 +203,7 @@ function initialStates(): DetectorState[] {
     active: false,
     peak: 0,
     best: group.ids[0],
+    pattern: emptyReadings(),
     started: 0,
     lastEnd: -Infinity,
   }));
@@ -246,10 +249,22 @@ export class NineSensorDetector {
           state.active = true;
           state.peak = strongest.peak;
           state.best = strongest.id;
+          state.pattern = emptyReadings();
+          for (const id of group.ids) {
+            state.pattern[id] = Math.max(values[id], peaks[id]);
+          }
           state.started = time;
         }
 
         return;
+      }
+
+      for (const id of group.ids) {
+        state.pattern[id] = Math.max(
+          state.pattern[id],
+          values[id],
+          peaks[id],
+        );
       }
 
       if (strongest.peak > state.peak) {
@@ -265,6 +280,7 @@ export class NineSensorDetector {
           time,
           durationMs: Math.max(0, time - state.started),
           bothCpr: false,
+          pattern: [...state.pattern] as NineReadings,
         });
 
         state.active = false;

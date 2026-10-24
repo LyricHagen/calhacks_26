@@ -7,9 +7,9 @@ const int FSR_PINS[9] = {
   15,
   16,
   9,
+  3,
   8,
-  18,
-  17
+  18
 };
 
 const char* SENSOR_KEYS[9] = {
