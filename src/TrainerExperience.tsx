@@ -17,13 +17,14 @@ import {
   type SpatialRegion,
   type SpatialSamples,
 } from './trainerLab/spatialModel';
+import { preloadCues, speak, speechSupported, stopSpeech } from './trainerLab/speech';
 
 type Mode = 'train' | 'calibrate' | 'test';
 type Scenario = 'severe' | 'cough' | 'unresponsive';
 type View = 'front' | 'back';
 type Tone = 'neutral' | 'success' | 'warning';
 type Connection = 'demo' | 'connecting' | 'live' | 'error';
-type Feedback = { tone: Tone; heading: string; detail: string };
+type Feedback = { tone: Tone; heading: string; detail: string; spoken?: string };
 type Counts = { back: number; front: number; cpr: number; correct: number; errors: number; rounds: number };
 type History = { time: string; label: string; verdict: string; good: boolean; peak: number; placementScore: number | null };
 
@@ -54,6 +55,11 @@ const startFeedback: Feedback = {
   detail: 'Follow the instruction, then use the mannequin or a connected sensor. We will assess contact location and sequence as you practise.',
 };
 const empty = (): NineReadings => [...EMPTY] as NineReadings;
+const VOICE_KEY = 'thrustworthy-voice';
+const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five'];
+function loadVoicePreference(): boolean {
+  try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch { return true; }
+}
 const prettyTime = () => new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 function Logo() {
@@ -69,6 +75,10 @@ function Refresh() {
   return <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
     <path d="M20 11a8 8 0 1 0-2 6" />
     <path d="M20 4v7h-7" /></svg>;
+}
+function Speaker({ on }: { on: boolean }) {
+  return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 9v6h4l5 4V5L8 9H4Z" />{on ? <path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" /> : <path d="m16 9 5 6m0-6-5 6" />}</svg>;
 }
 function Usb() {
   return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -237,6 +247,7 @@ export function TrainerExperience() {
   const [calibrationMessage, setCalibrationMessage] = useState('Capture reference patterns at the marked positions.');
   const [recentPattern, setRecentPattern] = useState<{ region: SpatialRegion; values: NineReadings } | null>(null);
   const [lastPlacement, setLastPlacement] = useState<SpatialEstimate | null>(null);
+  const [voiceOn, setVoiceOn] = useState(() => speechSupported() && loadVoicePreference());
 
   const detector = useRef(new NineSensorDetector());
   const protocol = useRef(new NineSensorProtocol());
@@ -255,6 +266,7 @@ export function TrainerExperience() {
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spatialSamplesRef = useRef(spatialSamples);
   const mounted = useRef(true);
+  const voiceRef = useRef(voiceOn);
 
   scenarioRef.current = scenario;
   modeRef.current = mode;
@@ -262,6 +274,7 @@ export function TrainerExperience() {
   baselineRef.current = baseline;
   thresholdRef.current = threshold;
   spatialSamplesRef.current = spatialSamples;
+  voiceRef.current = voiceOn;
   const phase = scenario === 'severe' ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review') : scenario === 'unresponsive' ? 'cpr' : 'cough';
   const recommended: SensorId | null = phase === 'back' ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 8 : null;
   const defaultView: View = phase === 'back' ? 'back' : 'front';
@@ -271,6 +284,19 @@ export function TrainerExperience() {
     return delta > top.value && delta >= threshold ? { value: delta, id: i as SensorId } : top;
   }, { value: 0, id: null }).id;
   const liveSensor = active !== null ? SENSOR_NAMES[active] : 'No pressure detected';
+
+  function say(text: string | undefined) {
+    if (voiceRef.current && text) speak(text);
+  }
+
+  function toggleVoice() {
+    const next = !voiceOn;
+    voiceRef.current = next;
+    setVoiceOn(next);
+    try { localStorage.setItem(VOICE_KEY, next ? 'on' : 'off'); } catch {}
+    if (next) { speak('Voice coaching on.'); void preloadCues(); }
+    else stopSpeech();
+  }
 
   function evaluate(event: DetectedAction) {
     const scenarioNow = scenarioRef.current;
@@ -297,6 +323,7 @@ export function TrainerExperience() {
         tone: 'warning',
         heading: 'Pause physical intervention',
         detail: 'Encourage an effective cough and monitor. Back blows and abdominal thrusts are for severe obstruction.',
+        spoken: 'Stop. Encourage them to keep coughing.',
       };
     } else if (scenarioNow === 'unresponsive') {
       good = event.type === 'cpr' && event.sensor === 8;
@@ -310,11 +337,14 @@ export function TrainerExperience() {
             tone: 'success',
             heading: 'Sternum contact recorded',
             detail: 'Hand placement contact detected. This does not measure CPR compression depth or effectiveness.',
+            // Compressions come at 100-120 per minute, so only call out every tenth.
+            spoken: nextCounts.cpr % 10 === 0 ? `${nextCounts.cpr}.` : undefined,
           }
         : {
             tone: 'warning',
             heading: 'Move to the sternum',
             detail: 'Use the single central sternum sensor for this CPR placement scenario.',
+            spoken: 'Move to the centre of the chest.',
           };
     } else {
       const expected: SpatialRegion | 'review' =
@@ -325,6 +355,7 @@ export function TrainerExperience() {
           tone: 'neutral',
           heading: 'Practice round complete',
           detail: 'Reassess the scenario. A completed training sequence does not establish that the airway has cleared.',
+          spoken: 'Round complete. Reassess.',
         };
       } else if (event.type !== expected) {
         result = {
@@ -333,6 +364,7 @@ export function TrainerExperience() {
           detail: expected === 'back'
             ? 'Practise a back blow between the shoulder blades before abdominal thrusts.'
             : 'Practise an abdominal thrust above the navel and below the breastbone.',
+          spoken: expected === 'back' ? 'Back blows first.' : 'Switch to abdominal thrusts.',
         };
       } else if (!placement) {
         ambiguous = true;
@@ -340,6 +372,7 @@ export function TrainerExperience() {
           tone: 'neutral',
           heading: 'Contact unclear — try again',
           detail: 'Not enough sensor response to estimate placement reliably. Reposition and repeat.',
+          spoken: 'Unclear. Try again.',
         };
       } else if (placement.uncertainty === 'broad') {
         ambiguous = true;
@@ -347,6 +380,7 @@ export function TrainerExperience() {
           tone: 'neutral',
           heading: 'Placement uncertain',
           detail: `${placement.correction} Spatial calibration can improve the model.`,
+          spoken: placement.spokenCorrection,
         };
       } else if (placement.score >= SPATIAL_SETTINGS.acceptanceScore) {
         good = true;
@@ -367,6 +401,11 @@ export function TrainerExperience() {
             (current === 5 && expected === 'back'
               ? 'Now move to the abdomen for the next part of the practice sequence.'
               : 'Follow the next highlighted action.'),
+          spoken: current < 5
+            ? `Good. ${COUNT_WORDS[current]}.`
+            : expected === 'back'
+              ? 'Five back blows. Now give abdominal thrusts.'
+              : 'Five thrusts. Reassess.',
         };
       } else if (placement.score >= SPATIAL_SETTINGS.borderlineScore) {
         ambiguous = true;
@@ -374,12 +413,14 @@ export function TrainerExperience() {
           tone: 'neutral',
           heading: 'Close or uncertain — repeat contact',
           detail: `${placement.correction} Approximate placement score: ${Math.round(placement.score)}/100.`,
+          spoken: `Close. ${placement.spokenCorrection}`,
         };
       } else {
         result = {
           tone: 'warning',
           heading: 'Adjust placement and retry',
           detail: `${placement.correction} Approximate placement score: ${Math.round(placement.score)}/100.`,
+          spoken: placement.spokenCorrection,
         };
       }
     }
@@ -393,6 +434,7 @@ export function TrainerExperience() {
     countsRef.current = nextCounts;
     setCounts(nextCounts);
     setFeedback(result);
+    say(result.spoken);
     setHistory(previous => [{
       time: prettyTime(),
       label: event.type === 'cpr' ? SENSOR_NAMES[event.sensor] : `${event.type} pressure pattern`,
@@ -461,6 +503,11 @@ export function TrainerExperience() {
     setScenario(next);
     scenarioRef.current = next;
     setViewOverride(null);
+    say(next === 'cough'
+      ? 'Effective cough. Encourage them to keep coughing.'
+      : next === 'unresponsive'
+        ? 'Unresponsive. Call for help and begin CPR on the centre of the chest.'
+        : 'Severe choking. Give five back blows between the shoulder blades.');
     setFeedback(next === 'cough' ? { tone: 'neutral', heading: 'A strong cough is a good sign', detail: 'Encourage the person to keep coughing. Watch for a change to weak or absent cough, inability to speak, or worsening responsiveness.' } : next === 'unresponsive' ? { tone: 'neutral', heading: 'Begin CPR practice', detail: 'Activate emergency response, start CPR with compressions and follow a certified adult BLS protocol. Only remove a visible object; never perform a blind finger sweep.' } : startFeedback);
   }
 
@@ -546,10 +593,12 @@ export function TrainerExperience() {
 
   useEffect(() => {
     mounted.current = true;
+    if (voiceRef.current) void preloadCues();
     return () => {
       mounted.current = false;
       if (simTimer.current) clearTimeout(simTimer.current);
       if (contactTimer.current) clearTimeout(contactTimer.current);
+      stopSpeech();
       void readerRef.current?.cancel().catch(() => { });
     };
   }, []);
@@ -613,6 +662,7 @@ export function TrainerExperience() {
     const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
     countsRef.current = next; setCounts(next);
     detector.current.reset(); setViewOverride(null);
+    say('Next round. Five back blows.');
     setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
   }
 
@@ -693,6 +743,7 @@ export function TrainerExperience() {
           <strong>Thrustworthy</strong>
           <span>Hands-on first-aid learning</span></div></div>
       <div className="top-actions">
+        {speechSupported() && <button type="button" className="connect-button" onClick={toggleVoice} aria-pressed={voiceOn} title="Speak feedback aloud"><Speaker on={voiceOn} />{voiceOn ? 'Voice on' : 'Voice off'}</button>}
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
         <button type="button" className="connect-button" onClick={connection === 'live' ? () => { void disconnect(); } : () => { void connect(); }} disabled={connection === 'connecting'}><Usb />{connection === 'live' ? 'Disconnect' : 'Connect sensor'}</button>
       </div>

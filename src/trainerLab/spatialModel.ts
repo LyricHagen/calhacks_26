@@ -30,6 +30,7 @@ export type SpatialEstimate = {
   estimate: { x: number; y: number };
   uncertainty: 'narrow' | 'moderate' | 'broad';
   correction: string;
+  spokenCorrection: string;
   cells: SpatialCell[];
   cellSize: number;
 };
@@ -233,9 +234,12 @@ function placementCorrection(
   x: number,
   y: number,
   uncertainty: SpatialEstimate['uncertainty'],
-): string {
+): { text: string; spoken: string } {
   if (uncertainty === 'broad') {
-    return 'Placement is unclear from this contact. Reposition and try again.';
+    return {
+      text: 'Placement is unclear from this contact. Reposition and try again.',
+      spoken: 'Unclear. Reposition.',
+    };
   }
 
   const config = REGIONS[region];
@@ -243,24 +247,47 @@ function placementCorrection(
   const vertical = y - config.targetY;
 
   if (Math.abs(horizontal) <= 13 && Math.abs(vertical) <= 14) {
-    return 'Estimated near the target area. Keep aiming at the highlighted region.';
+    return {
+      text: 'Estimated near the target area. Keep aiming at the highlighted region.',
+      spoken: 'Almost there.',
+    };
   }
 
+  // Spoken cues say "centre" rather than left/right: the rescuer stands
+  // behind the mannequin for thrusts, so screen left/right would be mirrored.
   if (Math.abs(horizontal) >= (region === 'back' ? 22 : 17)) {
     return horizontal < 0
-      ? 'Contact appears left of target. Move towards the centre (right in this view).'
-      : 'Contact appears right of target. Move towards the centre (left in this view).';
+      ? {
+          text: 'Contact appears left of target. Move towards the centre (right in this view).',
+          spoken: 'Off centre. Move to the middle.',
+        }
+      : {
+          text: 'Contact appears right of target. Move towards the centre (left in this view).',
+          spoken: 'Off centre. Move to the middle.',
+        };
   }
 
   if (region === 'front') {
     return vertical < 0
-      ? 'Contact appears too high. Move down towards the upper abdomen.'
-      : 'Contact appears too low. Move up towards the upper abdomen.';
+      ? {
+          text: 'Contact appears too high. Move down towards the upper abdomen.',
+          spoken: 'Too high. Move down.',
+        }
+      : {
+          text: 'Contact appears too low. Move up towards the upper abdomen.',
+          spoken: 'Too low. Move up.',
+        };
   }
 
   return vertical < 0
-    ? 'Contact appears above the illustrated back target. Shift slightly downward.'
-    : 'Contact appears below the illustrated back target. Shift upward between the shoulder blades.';
+    ? {
+        text: 'Contact appears above the illustrated back target. Shift slightly downward.',
+        spoken: 'Too high. Shift down.',
+      }
+    : {
+        text: 'Contact appears below the illustrated back target. Shift upward between the shoulder blades.',
+        spoken: 'Too low. Move up between the shoulder blades.',
+      };
 }
 
 export function estimatePlacement(
@@ -513,13 +540,16 @@ export function estimatePlacement(
       ? 'broad'
       : 'moderate';
 
+  const correction = placementCorrection(region, estimate.x, estimate.y, uncertainty);
+
   return {
     region,
     calibrated,
     score,
     estimate,
     uncertainty,
-    correction: placementCorrection(region, estimate.x, estimate.y, uncertainty),
+    correction: correction.text,
+    spokenCorrection: correction.spoken,
     cellSize: CELL_SIZE,
     cells: candidates.map((candidate, index) => ({
       x: candidate.x,
