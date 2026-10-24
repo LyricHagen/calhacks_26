@@ -47,6 +47,10 @@ export type DetectedAction = {
   peak: number;
   time: number;
   durationMs: number;
+  // Sharpness: time from 10% to 90% of this hit's own peak, and from the
+  // start of the rise to release. Null if the trace was too short to tell.
+  riseMs: number | null;
+  contactMs: number | null;
   bothCpr: boolean;
   pattern: NineReadings;
 };
@@ -197,7 +201,95 @@ type DetectorState = {
   patternEnergy: number;
   started: number;
   lastEnd: number;
+  // Recent strongest-sensor signal for this group, for timing the rise.
+  trace: TracePoint[];
+  startedTrace: number;
+  // Peak of the last hit that was reported, and the gap before this one,
+  // for spotting plate bounces.
+  lastPeak: number;
+  gapBefore: number;
 };
+
+type TracePoint = { t: number; v: number };
+
+// Firmware sends a frame every 20 ms.
+const FRAME_MS = 20;
+// How much signal history to keep before a hit starts.
+const TRACE_LEAD_MS = 1000;
+// A plate rebounding after a hard hit registers as a small, sharp second
+// hit. Drop a hit that starts this soon after the last one ended and peaks
+// below this fraction of it.
+const REBOUND_MS = 500;
+const REBOUND_PEAK_FRACTION = 0.5;
+
+// Wobble allowed while walking back down the rise, as a fraction of the
+// peak, so sensor noise on a slow push doesn't cut the rise short.
+const RISE_NOISE = 0.05;
+
+// Time at which the signal rose through `level`, searching back from the
+// peak no further than the trough. Interpolated between frames; long gaps
+// (demo mode, dropped frames) count as one frame so they don't read as slow.
+function crossing(trace: TracePoint[], peakIndex: number, troughIndex: number, level: number): number {
+  let index = peakIndex;
+
+  while (index > troughIndex && trace[index - 1].v >= level) {
+    index -= 1;
+  }
+
+  const current = trace[index];
+  const previous = index > troughIndex
+    ? trace[index - 1]
+    : { t: current.t - FRAME_MS, v: trace[troughIndex].v };
+  const previousTime = current.t - previous.t > 3 * FRAME_MS ? current.t - FRAME_MS : previous.t;
+  const fraction = (level - previous.v) / Math.max(1e-9, current.v - previous.v);
+
+  return previousTime + Math.min(1, Math.max(0, fraction)) * (current.t - previousTime);
+}
+
+function sharpness(trace: TracePoint[]): { riseMs: number | null; contactMs: number | null } {
+  if (!trace.length) {
+    return { riseMs: null, contactMs: null };
+  }
+
+  let peakIndex = 0;
+
+  trace.forEach((point, index) => {
+    if (point.v > trace[peakIndex].v) {
+      peakIndex = index;
+    }
+  });
+
+  const peak = trace[peakIndex].v;
+
+  // The rise starts at the low point just before the peak. Measuring from
+  // there, not from zero, keeps plate preload, ringing after the previous
+  // hit, or a missing baseline from stretching the rise backwards.
+  let troughIndex = peakIndex;
+
+  while (troughIndex > 0 && trace[troughIndex - 1].v <= trace[troughIndex].v + RISE_NOISE * peak) {
+    troughIndex -= 1;
+  }
+
+  // Noise tolerance can walk onto a plateau; settle on its lowest point.
+  for (let index = troughIndex; index < peakIndex; index++) {
+    if (trace[index].v < trace[troughIndex].v) {
+      troughIndex = index;
+    }
+  }
+
+  const floor = trace[troughIndex].v;
+  const span = peak - floor;
+
+  if (span <= 0) {
+    return { riseMs: null, contactMs: null };
+  }
+
+  const start = crossing(trace, peakIndex, troughIndex, floor + 0.1 * span);
+  const riseMs = Math.round(crossing(trace, peakIndex, troughIndex, floor + 0.9 * span) - start);
+  const contactMs = Math.round(trace[trace.length - 1].t - start);
+
+  return { riseMs: Math.max(0, riseMs), contactMs: Math.max(0, contactMs) };
+}
 
 function initialStates(): DetectorState[] {
   return GROUPS.map(group => ({
@@ -208,6 +300,10 @@ function initialStates(): DetectorState[] {
     patternEnergy: 0,
     started: 0,
     lastEnd: -Infinity,
+    trace: [],
+    startedTrace: 0,
+    lastPeak: 0,
+    gapBefore: Infinity,
   }));
 }
 
@@ -224,6 +320,9 @@ export class NineSensorDetector {
     time: number,
     contactDelta = RAW_THRESHOLD,
     peaks: NineReadings = values,
+    // ESP32 millis() for this frame. Preferred for timing: several frames
+    // often arrive in one serial read, so arrival times bunch together.
+    deviceTime: number | null = null,
   ): DetectedAction[] {
     const events: DetectedAction[] = [];
     const threshold = Math.max(1, contactDelta);
@@ -242,6 +341,15 @@ export class NineSensorDetector {
 
       const strongest = ranked[0];
       const liveMax = Math.max(...ranked.map(item => item.live));
+      const traceTime = deviceTime ?? time;
+
+      state.trace.push({ t: traceTime, v: strongest.peak });
+
+      // Keep a short lead-in before the hit, and the whole hit while it lasts.
+      const traceStart = (state.active ? state.startedTrace : traceTime) - TRACE_LEAD_MS;
+      while (state.trace.length && state.trace[0].t < traceStart) {
+        state.trace.shift();
+      }
       const snapshot = emptyReadings();
       let snapshotEnergy = 0;
 
@@ -260,7 +368,9 @@ export class NineSensorDetector {
           state.best = strongest.id;
           state.pattern = snapshot;
           state.patternEnergy = snapshotEnergy;
+          state.gapBefore = time - state.lastEnd;
           state.started = time;
+          state.startedTrace = traceTime;
         }
 
         return;
@@ -277,6 +387,20 @@ export class NineSensorDetector {
       }
 
       if (liveMax <= releaseThreshold) {
+        const rebound = state.gapBefore < REBOUND_MS &&
+          state.peak < state.lastPeak * REBOUND_PEAK_FRACTION;
+
+        if (rebound) {
+          // Not reported, and lastPeak stays the real hit's so a chain of
+          // bounces is all dropped.
+          console.debug(`[sensors] ignored ${group.type} rebound: peak ${state.peak} vs ${state.lastPeak}, ${Math.round(state.gapBefore)} ms after`);
+          state.active = false;
+          state.lastEnd = time;
+          state.peak = 0;
+          state.patternEnergy = 0;
+          return;
+        }
+
         events.push({
           type: group.type,
           sensor: group.ids.reduce((best, id) =>
@@ -287,12 +411,14 @@ export class NineSensorDetector {
           peak: state.peak,
           time,
           durationMs: Math.max(0, time - state.started),
+          ...sharpness(state.trace),
           bothCpr: false,
           pattern: [...state.pattern] as NineReadings,
         });
 
         state.active = false;
         state.lastEnd = time;
+        state.lastPeak = state.peak;
         state.peak = 0;
         state.patternEnergy = 0;
       }

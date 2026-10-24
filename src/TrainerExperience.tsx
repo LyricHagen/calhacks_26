@@ -31,7 +31,7 @@ type Tone = 'neutral' | 'success' | 'warning';
 type Connection = 'demo' | 'connecting' | 'live' | 'error';
 type Feedback = { tone: Tone; heading: string; detail: string; spoken?: string };
 type Counts = { back: number; front: number; cpr: number; correct: number; errors: number; rounds: number };
-type History = { time: string; label: string; verdict: string; good: boolean; peak: number; placementScore: number | null };
+type History = { time: string; label: string; verdict: string; good: boolean; peak: number; placementScore: number | null; riseMs: number | null; contactMs: number | null };
 
 type SerialPort = {
   open: (options: { baudRate: number }) => Promise<void>;
@@ -41,6 +41,15 @@ type SerialPort = {
 type SerialNavigator = Navigator & { serial?: { requestPort: () => Promise<SerialPort> } };
 
 const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 0, rounds: 0 };
+// Start-to-start pacing window for back blows or abdominal thrusts. Training pace, not an AHA figure.
+const MIN_INTERVAL_MS = 1000;
+const MAX_INTERVAL_MS = 3000;
+const noLastStart = (): Record<ActionType, number> => ({ back: -Infinity, front: -Infinity, cpr: -Infinity });
+// Longest 10-90% rise that still counts as a sharp hit rather than a push.
+// From mannequin tests with plates: normal thrusts rose in 175-211 ms, slow
+// ones in 547-1272 ms. Normal back blows rose in 117-322 ms; the back cutoff
+// is provisional until slow back pushes are measured.
+const MAX_RISE_MS: Record<'back' | 'front', number> = { back: 500, front: 400 };
 const SENSOR_GROUPS = [
   { name: 'ABDOMEN', ids: [0, 1, 2, 3, 4] },
   { name: 'BACK', ids: [5, 6, 7] },
@@ -284,6 +293,7 @@ export function TrainerExperience() {
   const simBusyRef = useRef(false);
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStart = useRef(noLastStart());
   const spatialSamplesRef = useRef(spatialSamples);
   const mounted = useRef(true);
   const voiceRef = useRef(voiceOn);
@@ -402,6 +412,14 @@ export function TrainerExperience() {
     } else {
       const expected: SpatialRegion | 'review' =
         nextCounts.back < 5 ? 'back' : nextCounts.front < 5 ? 'front' : 'review';
+      const start = event.time - event.durationMs;
+      const sinceLast = start - lastStart.current[event.type];
+      lastStart.current[event.type] = start;
+      const tooFast = event.type === expected && sinceLast < MIN_INTERVAL_MS;
+      // The first hit of a set has no previous start (sinceLast is Infinity), so it is never slow.
+      const tooSlow = event.type === expected && Number.isFinite(sinceLast) && sinceLast > MAX_INTERVAL_MS;
+      const pushed = expected !== 'review' && event.type === expected &&
+        event.riseMs !== null && event.riseMs > MAX_RISE_MS[expected];
 
       if (expected === 'review') {
         result = {
@@ -418,6 +436,23 @@ export function TrainerExperience() {
             ? 'Practise a back blow between the shoulder blades before abdominal thrusts.'
             : 'Practise an abdominal thrust above the navel and below the breastbone.',
           spoken: expected === 'back' ? 'Back blows first.' : 'Switch to abdominal thrusts.',
+        };
+      } else if (tooFast) {
+        result = {
+          tone: 'warning',
+          heading: 'Too fast — not counted',
+          detail: `That ${expected === 'back' ? 'back blow' : 'thrust'} came ${(sinceLast / 1000).toFixed(1)} s after the last one. Make each one separate and deliberate: pause, reset your position, then go again.`,
+          spoken: 'Too fast. Pause between each one.',
+        };
+      } else if (pushed) {
+        result = {
+          tone: 'warning',
+          heading: 'Too slow a push — not counted',
+          detail: `That ${expected === 'back' ? 'back blow' : 'thrust'} took ${event.riseMs} ms to build up. ` +
+            (expected === 'back'
+              ? 'Strike quickly and sharply with the heel of your hand rather than pushing.'
+              : 'Make each thrust a quick, sharp pull inward and upward rather than a slow squeeze.'),
+          spoken: expected === 'back' ? 'Too slow. Make it a quick, sharp blow.' : 'Too slow. Make it a quick thrust.',
         };
       } else if (!placement) {
         ambiguous = true;
@@ -460,6 +495,16 @@ export function TrainerExperience() {
               ? BACK_TO_FRONT_CUE
               : PHASE_GUIDES.review.spoken,
         };
+
+        if (tooSlow) {
+          result = {
+            tone: 'warning',
+            heading: 'Counted — but keep the pace up',
+            detail: `Good placement, but ${(sinceLast / 1000).toFixed(1)} s passed since the last one. In a real emergency, keep going without long pauses. ${result.detail}`,
+            // The set-complete cues carry the next instructions, so keep those.
+            spoken: current < 5 ? 'Counted. Keep the pace up.' : result.spoken,
+          };
+        }
       } else if (placement.score >= SPATIAL_SETTINGS.borderlineScore) {
         ambiguous = true;
         result = {
@@ -495,6 +540,8 @@ export function TrainerExperience() {
       good,
       peak: event.peak,
       placementScore: placement ? Math.round(placement.score) : null,
+      riseMs: event.riseMs,
+      contactMs: event.contactMs,
     }, ...previous].slice(0, 12));
 
     setFlash(value => value + 1);
@@ -526,7 +573,7 @@ export function TrainerExperience() {
     readingWindow.current.push(vals);
     if (readingWindow.current.length > 75) readingWindow.current.shift();
     if (modeRef.current === 'train') {
-      const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks);
+      const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks, frame.deviceTimeMs);
       for (const event of events) evaluate(event);
     }
 
@@ -539,6 +586,7 @@ export function TrainerExperience() {
     if (simTimer.current) clearTimeout(simTimer.current);
     simBusyRef.current = false; setSimBusy(false);
     detector.current.reset();
+    lastStart.current = noLastStart();
     countsRef.current = { ...INITIAL_COUNTS };
     setCounts({ ...INITIAL_COUNTS });
     setHistory([]);
@@ -733,6 +781,8 @@ export function TrainerExperience() {
     const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
     countsRef.current = next; setCounts(next);
     detector.current.reset(); setViewOverride(null);
+    // A new round starts fresh: the gap since last round's final thrust isn't a slow blow.
+    lastStart.current = noLastStart();
     say(PHASE_GUIDES.back.spoken);
     setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
   }
@@ -972,7 +1022,9 @@ export function TrainerExperience() {
               <span className="readout-label">LIVE SENSOR</span>
               <strong>{liveSensor}</strong>
               <div className="live-pulse">
-                <span className={active !== null ? 'lit' : ''} />{active === null ? 'Waiting for pressure' : `${Math.max(0, readings[active] - baseline[active])} above baseline`}</div></div>
+                <span className={active !== null ? 'lit' : ''} />{active === null ? 'Waiting for pressure' : `${Math.max(0, readings[active] - baseline[active])} above baseline`}</div>
+              {history[0]?.riseMs != null && <div className="sharpness-readout">
+                Last hit: rise {history[0].riseMs} ms · contact {history[0].contactMs} ms</div>}</div>
             <div className="coach-divider" />
             <div className="result-stat">
               <div>
