@@ -74,8 +74,9 @@ const prettyTime = () => new Date().toLocaleTimeString(undefined, { hour: '2-dig
 
 function Logo() {
   return <div className="brandmark" aria-hidden="true">
-    <svg viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="12" fill="#007E79" />
-      <path d="M9 20h6l3-8 5 17 4-9h4" stroke="#fff" strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg></div>;
+    <svg viewBox="0 0 40 40"><rect width="40" height="40" rx="10.4" fill="#007E79" />
+      <path d="M12.4 20 20 12.4 27.6 20" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <circle cx="20" cy="27.2" r="2.8" fill="#4CDBB8" /></svg></div>;
 }
 function Check({ size = 17 }: { size?: number }) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
