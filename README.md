@@ -1,62 +1,70 @@
-# ChokeSense — One-Page Guided Trainer
+# ChokeSense — guided mannequin trainer
 
-A lightweight, offline-capable browser demo of a sensor-guided adult choking-response training experience.
+A single-page React + TypeScript training prototype for adult choking-response practice, with five abdominal FSRs, three back FSRs, and one sternum FSR. No server or API key is required for the simulated demo.
 
-## Start
+## Run the app
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Open **http://localhost:5173**. There is only one page. No login, API key, or backend is required.
+Open http://localhost:5173 in Chrome or Edge. Use **Guided training** for the interactive practice flow, **Calibrate** to capture resting readings, and **Sensor test** to check individual channels.
 
-## Product flow
+## Final physical sensor and GPIO mapping
 
-- **Guided training:** Choose *Severe choking*, *Effective cough*, or *Unresponsive / CPR*. Follow the main instruction, watch the target zone on the mannequin, and trigger a real or simulated sensor contact. Get immediate, specific placement feedback. The progress counter advances only when the designated sensor contact completes.
-- **Calibrate:** Leave all sensors untouched, capture the resting ADC baseline, and adjust the contact threshold. Baseline/threshold are used by the same detector as the real device.
-- **Sensor test:** Check nine raw 12-bit ADC channels independently; watch bar meters and mark sensor channels tested. Use **Test** buttons in Demo mode.
-- **Export results:** Download the training event summary as local JSON. No results are uploaded.
+| Serial index | Name | ESP32-S3 GPIO |
+|---|---|---|
+| 0 | Front abdomen target | 4 |
+| 1 | Front high | 5 |
+| 2 | Front low | 7 |
+| 3 | Front left | 15 |
+| 4 | Front right | 16 |
+| 5 | Centre back (target) | 9 |
+| 6 | Back left (off-target) | 3 |
+| 7 | Back right (off-target) | 8 |
+| 8 | Sternum (CPR) | 18 |
 
-## ESP32-S3
+**Back left/right are defined from the point of view of a person facing the mannequin's back.** The back-view diagram places sensor 6 to the left and sensor 7 to the right of the central target.
 
-Firmware is in `firmware/chokesense_s3_9fsr/main.cpp`. It emits newline-delimited JSON at 115200 baud:
+## Hardware and protocol
+
+Current firmware: `firmware/chokesense_s3_9fsr/main.cpp`.
+
+It streams newline-delimited JSON at 115200 baud in the format:
 
 ```json
-{"schema":"fsr9-v1","t":1234,"fsr":[120,0,0,0,0,0,0,0,0],"peak":[210,0,0,0,0,0,0,0,0]}
+{"schema":"fsr9-v1","t":12000,"fsr":[0,0,0,0,0,1500,0,0,0],"peak":[0,0,0,0,0,2300,0,0,0]}
 ```
 
-The firmware periodically announces logical sensor order with a `hello` frame. The TypeScript parser in `src/trainerLab/sensors.ts` maps incoming names to the correct UI channels.
+Every connection also receives periodic `hello` messages declaring logical sensor names. The frontend matches physical channels to logical names from those messages. On every sensor, use a 3.3 V-safe voltage-divider circuit, and verify that pressure makes the expected ADC value increase.
 
-1. Set `FSR_PINS` according to your board's actual wiring (example: ADC1 GPIO1, GPIO2, GPIO4–10). Connect every FSR through its own voltage divider, with a **3.3 V** ADC input limit.
-2. Build using PlatformIO with `firmware/chokesense_s3_9fsr/platformio.ini` or configure an equivalent ESP32-S3 Arduino environment.
-3. Open the frontend in **Chrome/Edge over localhost or HTTPS**, click **Connect sensor**, then choose the serial port.
-4. In **Calibrate**, release all pads, wait for idle frames, and capture the resting baseline. Use **Sensor test** to check all nine wired channels.
-5. Run a scenario in **Guided training**. One recorded event is a contact **followed by release**, not a guarantee of correct force or timing.
+To compile with PlatformIO, from this project root:
 
-Serial port access works in compatible desktop browsers; Chrome's USB port picker is triggered directly by the user click. Do not open the Arduino serial monitor simultaneously.
-
-## Design details
-
-**React + TypeScript** dynamically re-render the screen when `useState` changes. `NineSensorProtocol` parses sensor packets, `NineSensorDetector` identifies contact/release events, and the React trainer state machine compares those events to the current step. The mannequin is SVG and its target highlights, sensor pulses, and posture movement are animated via CSS; no 3D engine or animation library is required.
-
-**No Gemini or SpacetimeDB is currently integrated.** Immediate coaching is deterministic and works with no internet. An LLM could be added later for a non-clinical session recap, not for time-sensitive emergency decisions.
-
-## Important limitations
-
-FSR raw values (0–4095) are **not calibrated newtons** and cannot verify clinical thrust effectiveness or CPR compression depth. An animated airway illustrates the selected scenario, but **never declares the obstruction cleared** from sensor data. The simulated five-and-five round is for guided placement practice, not evidence of clinical competence. Some adult first-aid variations apply (e.g. pregnancy or inability to encircle the abdomen); this demo does not support those scenarios. This is a learning prototype, not a substitute for formal training.
-
-2025 American Heart Association adult BLS reference: https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support
-
-## Folder structure
-
+```bash
+cd firmware/chokesense_s3_9fsr
+platformio run -e esp32-s3
+platformio run -e esp32-s3 --target upload
 ```
-src/
-  App.tsx                 one-page app root
-  TrainerExperience.tsx   guide, illustrations, modes, live serial, feedback
-  trainerLab/sensors.ts   nine-FSR protocol and contact detector
-  styles.css             responsive interface and animations
-firmware/
-  chokesense_s3_9fsr/    current nine-FSR ESP32-S3 firmware
-  chokesense/             original five-pad firmware retained for reference
-```
+
+Your ESP32-S3 board must expose the chosen GPIOs. GPIO3 is a boot strapping pin, so ensure the voltage divider does not interfere with reset or boot. GPIO15, GPIO16 and GPIO18 are ADC2 pins, which may conflict with Wi-Fi operation on ESP32-S3. The project uses USB Serial and does not require Wi-Fi. The firmware has not been flashed or tested on your particular board.
+
+## Guided demo
+
+1. Select **Severe choking**.
+2. Follow the highlighted back target. Use **Simulate correct contact** five times.
+3. The trainer advances to the abdominal target for five contacts.
+4. Try off-target sensors to see directional corrections. Off-target actions do not advance progress.
+5. Select **Effective cough** to see the observe-and-encourage scenario; select **Unresponsive / CPR** for the lower-priority sternum placement exercise.
+6. Use **Calibrate** and **Sensor test** for hardware setup.
+
+The animation and feedback classify approximate sensor contact, sequence and location only. They cannot determine adequate physical force, effective obstruction clearance, or CPR depth. This is an educational prototype, not medical certification or a substitute for professional training.
+
+## Source map
+
+- `src/TrainerExperience.tsx`: single-page React experience, coaching and animated SVG diagram
+- `src/trainerLab/sensors.ts`: named-channel parser and contact/release detector
+- `src/styles.css`: layout and animation styles
+- `firmware/chokesense_s3_9fsr/main.cpp`: nine-FSR ESP32-S3 firmware
+
+Guidance reference: [2025 AHA Adult Basic Life Support](https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support).
