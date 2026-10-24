@@ -99,19 +99,30 @@ function Usb() {
     <path d="M12 3v15m0-15-3 3m3-3 3 3M12 18 7 13m5 5 5-5M7 13v-2m10 2v-2" /><circle cx="7" cy="9" r="1" /><rect x="16" y="8" width="3" height="3" /></svg>;
 }
 
+function Face({ severity }: { severity: 1 | 2 | 3 }) {
+  return <g fill="none" stroke="#9c6a5c" strokeLinecap="round">
+    <path d={severity === 3 ? 'M168 57q7 4 13 0M190 57q7 4 13 0' : 'M168 57q7-4 13 0M190 57q7-4 13 0'} strokeWidth="1.7" />
+    {severity < 3 && <path d={severity === 2 ? 'M166 50l14-5M188 45l14 5' : 'M166 49l14-3M188 46l14 3'} strokeWidth="1.6" />}
+    <path d="M185 59v15l-4 2" strokeWidth="1.4" />
+    <path d={severity === 1 ? 'M176 89q8-3 16 0' : severity === 2 ? 'M175 90q9-6 18 0' : 'M178 88h12'} strokeWidth={severity === 2 ? 1.5 : 1.3} />
+  </g>;
+}
+
 function BodyDiagram({
-  view, active, target, onSensor, cpr, flash, wrong, heatmap,
+  view, active, target, onSensor, cpr, flash, wrong, heatmap, severity,
 }: {
   view: View; active: SensorId | null; target: SensorId | null;
   onSensor: (id: SensorId) => void; cpr: boolean; flash: number; wrong: boolean;
   heatmap: SpatialEstimate | null;
+  // 1 effective cough, 2 severe choking, 3 unresponsive; the figure's distress escalates with it.
+  severity: 1 | 2 | 3;
 }) {
   const coords = view === 'front' ? FRONT_COORDS : BACK_COORDS;
   const focusY = view === 'back' ? 190 : cpr ? 182 : 292;
   const activePosition = coords.find(item => item.id === active);
   const targetPosition = coords.find(item => item.id === target);
   return <div className="body-stage">
-    <svg className={`body-illustration ${active !== null ? 'impact' : ''}`} viewBox="0 0 368 420" role="img" aria-label={`Interactive ${view} view of training mannequin with force sensor locations`}>
+    <svg className={`body-illustration lvl-${severity} ${active !== null ? 'impact' : ''}`} viewBox="0 0 368 420" role="img" aria-label={`Interactive ${view} view of training mannequin with force sensor locations`}>
       <defs>
         <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#f4cfb2" /><stop offset=".42" stopColor="#d9a787" /><stop offset="1" stopColor="#bc816a" />
@@ -123,20 +134,19 @@ function BodyDiagram({
         <filter id="bodyShadow"><feDropShadow dx="0" dy="12" stdDeviation="10" floodColor="#70472f" floodOpacity=".16" /></filter>
       </defs>
       <ellipse cx="184" cy="396" rx="115" ry="12" fill="#bcc9bd" opacity=".22" />
+      <g className="figure-2d">
       <g filter="url(#bodyShadow)">
 
-        <path d="M126 109 C99 116 73 135 65 176 L45 280 Q41 304 58 310 Q74 314 83 290 L113 200 118 298 250 298 255 201 286 289 Q297 313 313 308 Q327 302 321 277 L304 176 C296 136 268 116 243 109Z" fill="url(#arms)" stroke="#a77968" strokeWidth="1.3" />
+        <path className="shoulders-2d" d="M126 109 C99 116 73 135 65 176 L45 280 Q41 304 58 310 Q74 314 83 290 L113 200 118 298 250 298 255 201 286 289 Q297 313 313 308 Q327 302 321 277 L304 176 C296 136 268 116 243 109Z" fill="url(#arms)" stroke="#a77968" strokeWidth="1.3" />
 
         <path d="M157 92 157 119 Q183 137 211 119 L211 92Z" fill="url(#skin)" />
 
-        <ellipse cx="150" cy="60" rx="10" ry="16" fill="#d6a080" /><ellipse cx="217" cy="60" rx="10" ry="16" fill="#cb9579" />
-        <path d="M148 36 Q153 11 184 11 Q215 10 223 38 L216 80 Q207 105 184 109 Q160 102 151 81Z" fill="url(#skin)" stroke="#ad806f" strokeWidth="1.2" />
-        <path d="M150 42 Q151 10 181 9 Q219 7 221 39 Q201 23 180 23 Q159 25 150 42Z" fill="#293f3e" />
-        {view === 'front' && <g fill="none" stroke="#9c6a5c" strokeLinecap="round">
-          <path d="M168 57q7-4 13 0M190 57q7-4 13 0" strokeWidth="1.7" />
-          <path d="M185 59v15l-4 2" strokeWidth="1.4" />
-          <path d="M175 87q9 5 18 0" strokeWidth="1.3" />
-        </g>}
+        <g className="head-2d">
+          <ellipse cx="150" cy="60" rx="10" ry="16" fill="#d6a080" /><ellipse cx="217" cy="60" rx="10" ry="16" fill="#cb9579" />
+          <path d="M148 36 Q153 11 184 11 Q215 10 223 38 L216 80 Q207 105 184 109 Q160 102 151 81Z" fill="url(#skin)" stroke="#ad806f" strokeWidth="1.2" />
+          <path d="M150 42 Q151 10 181 9 Q219 7 221 39 Q201 23 180 23 Q159 25 150 42Z" fill="#293f3e" />
+          {view === 'front' && <Face severity={severity} />}
+        </g>
 
         <path d="M126 115 C139 128 159 137 184 137 Q225 138 243 115 C260 135 270 163 265 210 Q254 257 253 292 L245 368 Q184 385 121 368 L114 293 Q109 254 102 212 C96 167 105 136 126 115Z" fill="url(#chest)" stroke="#b8856f" strokeWidth="1.3" />
         {view === 'front' ? <g fill="none" stroke="#a97667" strokeWidth="1.5" opacity=".56">
@@ -209,6 +219,7 @@ function BodyDiagram({
         </g>
       )}
       {active !== null && coords.some(c => c.id === active) && <circle key={flash} cx={coords.find(c => c.id === active)!.x} cy={coords.find(c => c.id === active)!.y} r="39" className="contact-ripple" fill="none" stroke={wrong ? '#df655c' : '#0eab93'} strokeWidth="3" />}
+      </g>
     </svg>
     <span className="anatomy-credit">Illustrative anatomy · sensor positions schematic</span>
   </div>;
@@ -925,7 +936,8 @@ export function TrainerExperience() {
               <div className="view-switch">
                 <button type="button" className={view === 'back' ? 'on' : ''} onClick={() => setViewOverride('back')}>Back</button>
                 <button type="button" className={view === 'front' ? 'on' : ''} onClick={() => setViewOverride('front')}>Front</button></div></div>
-            <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap} />
+            <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap}
+              severity={scenario === 'cough' ? 1 : scenario === 'severe' ? 2 : 3} />
             <div className="mannequin-guide">
               <span className="legend-dot" /> Smoothed contact estimate from nearby FSR readings; areas between sensors are inferred, not measured. Back left/right are from the back-facing view.</div>
           </article>

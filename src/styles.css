@@ -1905,3 +1905,61 @@ a {
 .hear-again {
   margin: 0 0 18px -10px;
 }
+
+/* Figure animation escalates with the scenario: lvl-1 effective cough,
+   lvl-2 severe choking, lvl-3 unresponsive (slumped, no motion). */
+.figure-2d,.head-2d,.shoulders-2d {
+  transform-box: view-box;
+}
+
+.figure-2d {
+  transform-origin: 184px 380px;
+}
+
+.head-2d {
+  transform-origin: 184px 112px;
+}
+
+.lvl-1 .figure-2d {
+  animation: bounceSoft2d 2s infinite;
+}
+
+.lvl-2 .figure-2d {
+  animation: bounce2d 2s infinite;
+}
+
+.lvl-3 .figure-2d {
+  transform: translateY(4px) rotate(1deg);
+  transition: transform .8s ease;
+}
+
+.lvl-3 .head-2d {
+  transform: rotate(7deg) translateY(5px);
+  transition: transform .8s ease;
+}
+
+.lvl-3 .shoulders-2d {
+  transform: translateY(3px);
+}
+
+@keyframes bounce2d {
+  0%,20%,50%,70%,100% { transform: none; }
+  4% { transform: translate(1.5px,-4px) rotate(-1deg); }
+  9% { transform: translate(-1px,1px) rotate(.6deg); }
+  14% { transform: translate(.5px,-1.2px) rotate(-.3deg); }
+  54% { transform: translate(-1.5px,-4px) rotate(1deg); }
+  59% { transform: translate(1px,1px) rotate(-.6deg); }
+  64% { transform: translate(-.5px,-1.2px) rotate(.3deg); }
+}
+
+@keyframes bounceSoft2d {
+  0%,20%,100% { transform: none; }
+  4% { transform: translate(.8px,-2px) rotate(-.5deg); }
+  9% { transform: translate(-.5px,.5px) rotate(.3deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lvl-1 .figure-2d,.lvl-2 .figure-2d {
+    animation: none;
+  }
+}
