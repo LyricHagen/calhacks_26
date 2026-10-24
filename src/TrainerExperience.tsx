@@ -25,6 +25,9 @@ const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 
 // Start-to-start pacing window for back blows or abdominal thrusts. Training pace, not an AHA figure.
 const MIN_INTERVAL_MS = 1000;
 const MAX_INTERVAL_MS = 3000;
+// A hit must peak at least this many ADC counts above baseline to be a firm blow or thrust.
+// Lighter hits still register as contact but are left out of pacing.
+const FIRM_PEAK = 2000;
 const noLastStart = (): Record<ActionType, number> => ({ back: -Infinity, front: -Infinity, cpr: -Infinity });
 const SENSOR_GROUPS = [
   { name: 'ABDOMEN', ids: [0, 1, 2, 3, 4] },
@@ -252,6 +255,7 @@ export function TrainerExperience() {
     const curr = { ...countsRef.current };
     let result: Feedback;
     let good = false;
+    let light = false;
     if (sc === 'cough') {
       result = { tone: 'warning', heading: 'No intervention needed yet', detail: 'A strong, effective cough should be encouraged and monitored. Only intervene if the obstruction becomes severe.' };
     } else if (sc === 'unresponsive') {
@@ -265,14 +269,23 @@ export function TrainerExperience() {
     } else {
       const expected = curr.back < 5 ? 'back' : curr.front < 5 ? 'front' : 'review';
       const isTarget = expected === 'back' ? event.sensor === 5 : expected === 'front' ? event.sensor === 0 : false;
+      // event.peak is already measured above baseline, like the threshold.
+      const firm = event.peak >= FIRM_PEAK;
       const start = event.time - event.durationMs;
       const sinceLast = start - lastStart.current[event.type];
-      lastStart.current[event.type] = start;
+      if (firm) lastStart.current[event.type] = start;
       const tooFast = event.type === expected && sinceLast < MIN_INTERVAL_MS;
       // The first hit of a set has no previous start (sinceLast is Infinity), so it is never slow.
       const tooSlow = event.type === expected && Number.isFinite(sinceLast) && sinceLast > MAX_INTERVAL_MS;
       if (expected === 'review') {
         result = { tone: 'neutral', heading: 'Practice round complete', detail: 'You completed five back contacts and five abdominal contacts. If the person is still responsive and obstructed, another round is needed; this simulator cannot tell whether the object was removed.' };
+      } else if (!firm) {
+        // Not a real blow or thrust: neither counted nor an error.
+        light = true;
+        result = {
+          tone: 'neutral', heading: 'Too light — not counted',
+          detail: `That contact reached ${event.peak} above resting; a ${expected === 'back' ? 'back blow' : 'thrust'} needs ${FIRM_PEAK} to count. Use a firmer, deliberate motion.`,
+        };
       } else if (tooFast) {
         result = {
           tone: 'warning', heading: 'Too fast — not counted',
@@ -313,7 +326,7 @@ export function TrainerExperience() {
       }
     }
     if (good) curr.correct += 1;
-    else curr.errors += 1;
+    else if (!light) curr.errors += 1;
     countsRef.current = curr;
     setCounts(curr);
     setFeedback(result);
@@ -382,7 +395,7 @@ export function TrainerExperience() {
     if (connection === 'live' || simBusyRef.current) return;
     simBusyRef.current = true; setSimBusy(true);
     const pressed = empty();
-    ids.forEach(id => { pressed[id] = Math.min(ADC_MAX, baselineRef.current[id] + Math.max(1700, thresholdRef.current + 750)); });
+    ids.forEach(id => { pressed[id] = Math.min(ADC_MAX, baselineRef.current[id] + Math.max(FIRM_PEAK + 300, thresholdRef.current + 750)); });
     processFrameRef.current({ readings: pressed, peaks: pressed, deviceTimeMs: null });
     simTimer.current = setTimeout(() => {
       const resting = [...baselineRef.current] as NineReadings;
