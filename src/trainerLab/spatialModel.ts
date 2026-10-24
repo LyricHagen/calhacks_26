@@ -276,6 +276,30 @@ export function estimatePlacement(
     }
   }
 
+  const sensorInfluenceSigma = 14;
+  const fittedWeights = candidates.map(candidate =>
+    Math.exp(-0.5 * (candidate.error - minError)),
+  );
+  const fittedTotal = fittedWeights.reduce((sum, weight) => sum + weight, 0);
+
+  const kernelWeights = candidates.map(candidate =>
+    SPATIAL_REFERENCES[region].reduce((sum, reference, index) => {
+      const dx = candidate.x - reference.x;
+      const dy = candidate.y - reference.y;
+      const spatialInfluence = Math.exp(
+        -(dx * dx + dy * dy) / (2 * sensorInfluenceSigma ** 2),
+      );
+      return sum + observed[index] * spatialInfluence;
+    }, 0),
+  );
+  const kernelTotal = kernelWeights.reduce((sum, weight) => sum + weight, 0);
+  const modelWeight = hasSpatialCalibration(region, samples) ? 0.20 : 0.15;
+
+  const weights = candidates.map((_, index) =>
+    (1 - modelWeight) * kernelWeights[index] / Math.max(1e-12, kernelTotal) +
+    modelWeight * fittedWeights[index] / Math.max(1e-12, fittedTotal),
+  );
+
   let mass = 0;
   let targetMass = 0;
   let weightedX = 0;
@@ -283,8 +307,9 @@ export function estimatePlacement(
   let squareMass = 0;
   let maxWeight = 0;
 
-  const weights = candidates.map(candidate => {
-    const weight = Math.exp(-0.5 * (candidate.error - minError));
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index];
+    const weight = weights[index];
     mass += weight;
     squareMass += weight * weight;
     maxWeight = Math.max(weight, maxWeight);
@@ -297,9 +322,7 @@ export function estimatePlacement(
     if (dx * dx + dy * dy <= 1) {
       targetMass += weight;
     }
-
-    return weight;
-  });
+  }
 
   if (mass <= 0) {
     return null;
