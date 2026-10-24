@@ -610,7 +610,7 @@ export function TrainerExperience() {
 
   function downloadSummary() {
     const data = {
-      product: 'ThrustWorthy', exportedAt: new Date().toISOString(),
+      product: 'ChokeSense', exportedAt: new Date().toISOString(),
       scenario, connection, counts, thresholdADCAboveBaseline: threshold,
       baseline, events: history,
       spatialCalibration: {
@@ -667,7 +667,7 @@ export function TrainerExperience() {
     ? scenario === 'cough'
       ? 'An effective cough does not require physical intervention.'
       : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
-        ? `${Math.round(livePhaseEstimate.score)}/100 estimated target likelihood. ${livePhaseEstimate.correction} Release to register the action.`
+        ? `${Math.round(livePhaseEstimate.score)}/100 estimated placement score. ${livePhaseEstimate.correction} Release to register the action.`
         : activeWrong
           ? 'Wrong region for this step. Follow the highlighted target.'
           : 'Contact detected. Release to register the action.'
@@ -680,7 +680,7 @@ export function TrainerExperience() {
     <header className="topbar">
       <div className="brand"><Logo />
         <div>
-          <strong>ThrustWorthy</strong>
+          <strong>ChokeSense</strong>
           <span>Hands-on first-aid learning</span></div></div>
       <div className="top-actions">
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
@@ -935,7 +935,7 @@ export function TrainerExperience() {
 
       <footer className="footer">
         <div>
-          <span className="footer-logo">✳</span> ThrustWorthy <span className="footer-sep">·</span> Demo training prototype</div>
+          <span className="footer-logo">✳</span> ChokeSense <span className="footer-sep">·</span> Demo training prototype</div>
         <p>Adult scenarios based on AHA 2025 guidance. Not medical certification, not for use during an emergency. FSRs detect contact, not clinically effective force or compression depth.</p><a href="https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support" target="_blank" rel="noreferrer">Training reference ↗</a></footer>
     </main>
   </div>;
