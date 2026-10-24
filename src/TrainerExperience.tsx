@@ -18,13 +18,14 @@ import {
   type SpatialSamples,
 } from './trainerLab/spatialModel';
 import { BACK_TO_FRONT_CUE, PHASE_GUIDES } from './trainerLab/instructions';
+import { RhythmGame } from './minigames/RhythmGame';
 import { preloadCues, speak, speakAnswer, speechSupported, stopSpeech } from './trainerLab/speech';
 import {
   askGemini, listeningSupported, requestMicrophone, VoiceListener,
   type AssistantContext, type ListenerStatus,
 } from './trainerLab/assistant';
 
-type Mode = 'train' | 'calibrate' | 'test';
+type Mode = 'train' | 'calibrate' | 'test' | 'play';
 type Scenario = 'severe' | 'cough' | 'unresponsive';
 type View = 'front' | 'back';
 type Tone = 'neutral' | 'success' | 'warning';
@@ -302,6 +303,7 @@ export function TrainerExperience() {
   const baselineRef = useRef(baseline);
   const thresholdRef = useRef(threshold);
   const processFrameRef = useRef<(f: NineFrame) => void>(() => { });
+  const gameInputRef = useRef<(values: NineReadings, atMs: number) => void>(() => {});
   const simBusyRef = useRef(false);
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -584,6 +586,7 @@ export function TrainerExperience() {
     setFramesReceived(p => p + 1);
     readingWindow.current.push(vals);
     if (readingWindow.current.length > 75) readingWindow.current.shift();
+    if (modeRef.current === 'play') gameInputRef.current(vals, performance.now());
     if (modeRef.current === 'train') {
       const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks, frame.deviceTimeMs);
       for (const event of events) evaluate(event);
@@ -925,11 +928,14 @@ export function TrainerExperience() {
           <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('train'); }}>Guided training</button>
           <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('calibrate'); }}>Calibrate</button>
           <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('test'); }}>Sensor test</button>
+          <button type="button" role="tab" aria-selected={mode === 'play'} className={mode === 'play' ? 'selected' : ''} onClick={() => { detector.current.reset(); stopSpeech(); setRecentPattern(null); setMode('play'); }}>♫ Pulse Beat</button>
         </div>
         <span className="mode-status">{connection === 'live' ? 'LIVE INPUT' : 'SIMULATION MODE'}</span>
       </div>
 
       {connection === 'error' && <div className="connection-error" role="alert">{connectionDetail}</div>}
+
+      {mode === 'play' && <RhythmGame inputRef={gameInputRef} baseline={baseline} threshold={threshold} connected={connection === 'live'} />}
 
       {mode === 'train' && <>
         <div className="scenario-bar">
