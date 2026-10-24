@@ -59,8 +59,8 @@ const REGIONS = {
     interpolationSigma: 21,
     targetX: 184,
     targetY: 292,
-    targetRadiusX: 24,
-    targetRadiusY: 29,
+    targetRadiusX: 30,
+    targetRadiusY: 35,
   },
   back: {
     minX: 122,
@@ -71,13 +71,25 @@ const REGIONS = {
     interpolationSigma: 26,
     targetX: 184,
     targetY: 190,
-    targetRadiusX: 25,
-    targetRadiusY: 29,
+    targetRadiusX: 30,
+    targetRadiusY: 36,
   },
 };
 
 const CELL_SIZE = 6;
 const MODEL_NOISE = 0.12;
+
+export const SPATIAL_SETTINGS = {
+  noiseFloorAdc: 35,
+  relativeNoiseFloor: 0.06,
+  signalExponent: 0.85,
+  frontKernelWidth: 21,
+  backKernelWidth: 23,
+  pairDistanceLimit: 85,
+  pairMinimumResponse: 0.12,
+  borderlineScore: 35,
+  acceptanceScore: 54,
+} as const;
 
 export function emptySpatialSamples(): SpatialSamples {
   return { front: {}, back: {} };
@@ -166,6 +178,17 @@ function prediction(
     });
   }
 
+  const knownReference = references.find(reference =>
+    Math.hypot(reference.x - x, reference.y - y) <= CELL_SIZE / 2,
+  );
+  const knownSample = knownReference
+    ? samples[region][knownReference.id]
+    : null;
+
+  if (knownSample?.length === references.length) {
+    return normalise(knownSample);
+  }
+
   const model = Array(references.length).fill(0) as number[];
   let weightSum = 0;
 
@@ -201,7 +224,7 @@ function prediction(
   }));
 
   return geometric.map((value, index) =>
-    0.72 * value + 0.28 * learned[index],
+    0.30 * value + 0.70 * learned[index],
   );
 }
 
@@ -247,15 +270,49 @@ export function estimatePlacement(
   samples: SpatialSamples,
 ): SpatialEstimate | null {
   const observed = signalPattern(values, baseline, region);
-  const signal = Math.hypot(...observed);
+  const maximum = Math.max(...observed);
 
-  if (signal < 1) {
+  if (maximum < 1) {
     return null;
   }
 
-  const z = normalise(observed);
+  const noiseFloor = Math.max(
+    SPATIAL_SETTINGS.noiseFloorAdc,
+    maximum * SPATIAL_SETTINGS.relativeNoiseFloor,
+  );
+  const cleaned = observed.map(value => Math.max(0, value - noiseFloor));
+  const cleanedMax = Math.max(...cleaned);
+
+  if (cleanedMax < 1) {
+    return null;
+  }
+
+  const responses = cleaned.map(value =>
+    Math.pow(value / cleanedMax, SPATIAL_SETTINGS.signalExponent),
+  );
+  const responseTotal = responses.reduce((sum, value) => sum + value, 0);
+  const responseSquares = responses.reduce(
+    (sum, value) => sum + value * value,
+    0,
+  );
+  const effectiveSensors = responseTotal * responseTotal /
+    Math.max(1e-12, responseSquares);
+
+  const references = SPATIAL_REFERENCES[region];
   const config = REGIONS[region];
+  const centre = {
+    x: references.reduce(
+      (sum, reference, index) => sum + responses[index] * reference.x,
+      0,
+    ) / responseTotal,
+    y: references.reduce(
+      (sum, reference, index) => sum + responses[index] * reference.y,
+      0,
+    ) / responseTotal,
+  };
+
   const candidates: Array<{ x: number; y: number; error: number }> = [];
+  const z = normalise(cleaned);
   let minError = Infinity;
 
   for (let y = config.minY; y <= config.maxY; y += CELL_SIZE) {
@@ -269,50 +326,161 @@ export function estimatePlacement(
         (sum, value, index) => sum + (value - amplitude * k[index]) ** 2,
         0,
       );
-
       const error = residual / (MODEL_NOISE ** 2);
-      minError = Math.min(minError, error);
+
       candidates.push({ x, y, error });
+      minError = Math.min(minError, error);
     }
   }
 
-  const sensorInfluenceSigma = 14;
-  const fittedWeights = candidates.map(candidate =>
+  const sigma = (region === 'front'
+    ? SPATIAL_SETTINGS.frontKernelWidth
+    : SPATIAL_SETTINGS.backKernelWidth) +
+    (effectiveSensors < 1.3 ? 2.5 : 0);
+  const fusedSigma = sigma * 0.93;
+  const gaussian = (
+    x: number,
+    y: number,
+    cx: number,
+    cy: number,
+    width: number,
+  ) => Math.exp(
+    -((x - cx) ** 2 + (y - cy) ** 2) / (2 * width ** 2),
+  );
+
+  const pairs: Array<{ x: number; y: number; strength: number }> = [];
+
+  for (let i = 0; i < references.length; i++) {
+    for (let j = i + 1; j < references.length; j++) {
+      const first = references[i];
+      const second = references[j];
+      const distance = Math.hypot(first.x - second.x, first.y - second.y);
+      const strength = Math.min(responses[i], responses[j]);
+
+      if (
+        distance > SPATIAL_SETTINGS.pairDistanceLimit ||
+        strength < SPATIAL_SETTINGS.pairMinimumResponse
+      ) {
+        continue;
+      }
+
+      const pairTotal = responses[i] + responses[j];
+
+      pairs.push({
+        x: (first.x * responses[i] + second.x * responses[j]) / pairTotal,
+        y: (first.y * responses[i] + second.y * responses[j]) / pairTotal,
+        strength,
+      });
+    }
+  }
+
+  const sensorField = candidates.map(candidate =>
+    references.reduce(
+      (sum, reference, index) => sum + responses[index] * gaussian(
+        candidate.x,
+        candidate.y,
+        reference.x,
+        reference.y,
+        sigma,
+      ),
+      0,
+    ),
+  );
+
+  const fusedField = candidates.map(candidate =>
+    gaussian(
+      candidate.x,
+      candidate.y,
+      centre.x,
+      centre.y,
+      fusedSigma,
+    ),
+  );
+
+  const overlapField = candidates.map(candidate =>
+    pairs.reduce(
+      (sum, pair) => sum + pair.strength * gaussian(
+        candidate.x,
+        candidate.y,
+        pair.x,
+        pair.y,
+        fusedSigma,
+      ),
+      0,
+    ),
+  );
+
+  const fittedField = candidates.map(candidate =>
     Math.exp(-0.5 * (candidate.error - minError)),
   );
-  const fittedTotal = fittedWeights.reduce((sum, weight) => sum + weight, 0);
 
-  const kernelWeights = candidates.map(candidate =>
-    SPATIAL_REFERENCES[region].reduce((sum, reference, index) => {
-      const dx = candidate.x - reference.x;
-      const dy = candidate.y - reference.y;
-      const spatialInfluence = Math.exp(
-        -(dx * dx + dy * dy) / (2 * sensorInfluenceSigma ** 2),
-      );
-      return sum + observed[index] * spatialInfluence;
-    }, 0),
+  function normalisedField(field: number[]): number[] {
+    const total = field.reduce((sum, value) => sum + value, 0);
+
+    return field.map(value => value / Math.max(1e-12, total));
+  }
+
+  const sensorDensity = normalisedField(sensorField);
+  const fusedDensity = normalisedField(fusedField);
+  const overlapDensity = normalisedField(overlapField);
+  const fittedDensity = normalisedField(fittedField);
+
+  const calibrated = hasSpatialCalibration(region, samples);
+  const referenceResponses = calibrated
+    ? references.map(reference => normalise(samples[region][reference.id] ?? []))
+    : [];
+  const referenceErrors = referenceResponses.map(reference =>
+    z.reduce(
+      (sum, value, index) => sum + (value - reference[index]) ** 2,
+      0,
+    ),
   );
-  const kernelTotal = kernelWeights.reduce((sum, weight) => sum + weight, 0);
-  const modelWeight = hasSpatialCalibration(region, samples) ? 0.20 : 0.15;
+  const referenceBestError = Math.min(Infinity, ...referenceErrors);
+  const referenceConfidence = calibrated
+    ? Math.exp(-referenceBestError / (2 * 0.20 ** 2))
+    : 0;
+  const referenceField = calibrated
+    ? candidates.map(candidate => references.reduce((sum, reference, index) =>
+      sum + Math.exp(
+        -(referenceErrors[index] - referenceBestError) / (2 * 0.20 ** 2),
+      ) * gaussian(
+        candidate.x,
+        candidate.y,
+        reference.x,
+        reference.y,
+        sigma * 0.75,
+      ),
+    0))
+    : candidates.map(() => 0);
+  const referenceDensity = normalisedField(referenceField);
+
+  const modelAgreement = Math.exp(-0.5 * minError);
+  const modelWeight = 0.05 + (calibrated ? 0.10 : 0.30) * modelAgreement;
+  const referenceWeight = 0.30 * referenceConfidence;
+  const overlapWeight = pairs.length ? 0.12 : 0;
+  const sensorWeight = 0.38;
+  const fusedWeight = 1 - modelWeight - referenceWeight - overlapWeight - sensorWeight;
 
   const weights = candidates.map((_, index) =>
-    (1 - modelWeight) * kernelWeights[index] / Math.max(1e-12, kernelTotal) +
-    modelWeight * fittedWeights[index] / Math.max(1e-12, fittedTotal),
+    sensorWeight * sensorDensity[index] +
+    fusedWeight * fusedDensity[index] +
+    overlapWeight * overlapDensity[index] +
+    modelWeight * fittedDensity[index] +
+    referenceWeight * referenceDensity[index],
   );
 
   let mass = 0;
   let targetMass = 0;
   let weightedX = 0;
   let weightedY = 0;
-  let squareMass = 0;
   let maxWeight = 0;
 
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index];
     const weight = weights[index];
+
     mass += weight;
-    squareMass += weight * weight;
-    maxWeight = Math.max(weight, maxWeight);
+    maxWeight = Math.max(maxWeight, weight);
     weightedX += candidate.x * weight;
     weightedY += candidate.y * weight;
 
@@ -332,17 +500,23 @@ export function estimatePlacement(
     x: weightedX / mass,
     y: weightedY / mass,
   };
+  const score = Math.max(0, Math.min(100, 100 * targetMass / mass));
+  const targetResponse = responses[0];
+  const inconsistentCentre = effectiveSensors >= 1.7 &&
+    targetResponse < 0.15 &&
+    Math.abs(estimate.x - config.targetX) < config.targetRadiusX &&
+    Math.abs(estimate.y - config.targetY) < config.targetRadiusY;
 
-  const effectiveCells = mass * mass / Math.max(1e-12, squareMass);
-  const relativeSpread = effectiveCells / candidates.length;
   const uncertainty: SpatialEstimate['uncertainty'] =
-    relativeSpread < 0.14 ? 'narrow' :
-    relativeSpread < 0.35 ? 'moderate' : 'broad';
+    inconsistentCentre || (score >= SPATIAL_SETTINGS.borderlineScore &&
+      score < SPATIAL_SETTINGS.acceptanceScore)
+      ? 'broad'
+      : 'moderate';
 
   return {
     region,
-    calibrated: hasSpatialCalibration(region, samples),
-    score: Math.max(0, Math.min(100, 100 * targetMass / mass)),
+    calibrated,
+    score,
     estimate,
     uncertainty,
     correction: placementCorrection(region, estimate.x, estimate.y, uncertainty),
