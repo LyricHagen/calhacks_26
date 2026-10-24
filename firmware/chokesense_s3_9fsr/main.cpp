@@ -29,12 +29,22 @@ constexpr uint32_t SAMPLE_MS = 5;
 constexpr uint32_t SEND_MS = 20;
 constexpr uint32_t HELLO_MS = 5000;
 
+// Push-to-talk for the voice assistant. GPIO0 is the DevKitC's BOOT button,
+// usable as a normal input once the sketch is running. For an external
+// button, wire it from another free GPIO to GND and change this pin.
+constexpr int ASK_BUTTON_PIN = 0;
+constexpr uint32_t DEBOUNCE_MS = 40;
+
 int currentValues[NUM_SENSORS] = {0};
 int peakValues[NUM_SENSORS] = {0};
 
 uint32_t lastSample = 0;
 uint32_t lastSend = 0;
 uint32_t lastHello = 0;
+
+bool buttonDown = false;
+bool lastRawButton = false;
+uint32_t lastButtonChange = 0;
 
 void sendHello() {
   Serial.print("{\"hello\":\"chokesense-9fsr\",\"hz\":50,\"pads\":[");
@@ -91,6 +101,23 @@ void sendFrame() {
   Serial.println("]}");
 }
 
+void checkAskButton(uint32_t now) {
+  const bool raw = digitalRead(ASK_BUTTON_PIN) == LOW;
+
+  if (raw != lastRawButton) {
+    lastRawButton = raw;
+    lastButtonChange = now;
+  }
+
+  if (now - lastButtonChange >= DEBOUNCE_MS && raw != buttonDown) {
+    buttonDown = raw;
+
+    if (buttonDown) {
+      Serial.println("{\"event\":\"ask\"}");
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   analogReadResolution(12);
@@ -98,6 +125,8 @@ void setup() {
   for (int i = 0; i < NUM_SENSORS; i++) {
     pinMode(FSR_PINS[i], INPUT);
   }
+
+  pinMode(ASK_BUTTON_PIN, INPUT_PULLUP);
 
   sampleSensors();
   sendHello();
@@ -119,6 +148,8 @@ void loop() {
     lastSend = now;
     sendFrame();
   }
+
+  checkAskButton(now);
 
   if (now - lastHello >= HELLO_MS) {
     lastHello = now;

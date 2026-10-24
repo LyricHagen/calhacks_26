@@ -19,7 +19,7 @@ import {
 } from './trainerLab/spatialModel';
 import { chime, preloadCues, speak, speakAnswer, speechSupported, stopSpeech } from './trainerLab/speech';
 import {
-  askGemini, listeningSupported, VoiceListener,
+  askGemini, listeningSupported, requestMicrophone, VoiceListener,
   type AssistantContext, type ListenerStatus,
 } from './trainerLab/assistant';
 
@@ -287,6 +287,7 @@ export function TrainerExperience() {
   const listener = useRef<VoiceListener | null>(null);
   const assistantContext = useRef<AssistantContext | null>(null);
   const handleQuestionRef = useRef<(question: string) => void>(() => { });
+  const askArmed = useRef(true);
 
   scenarioRef.current = scenario;
   modeRef.current = mode;
@@ -522,8 +523,21 @@ export function TrainerExperience() {
     readingWindow.current.push(vals);
     if (readingWindow.current.length > 75) readingWindow.current.shift();
     if (modeRef.current === 'train') {
+      // Outside CPR practice the sternum sensor doubles as the ask-Gemini button,
+      // so its presses aren't graded as a wrong action.
+      const sternumAsks = scenarioRef.current !== 'unresponsive';
       const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks);
-      for (const event of events) evaluate(event);
+      for (const event of events) if (!(sternumAsks && event.type === 'cpr')) evaluate(event);
+
+      if (sternumAsks) {
+        const sternum = Math.max(vals[8], frame.peaks[8]) - baselineRef.current[8];
+        if (askArmed.current && sternum >= thresholdRef.current) {
+          askArmed.current = false;
+          listener.current?.listenOnce();
+        } else if (!askArmed.current && vals[8] - baselineRef.current[8] <= thresholdRef.current * 0.38) {
+          askArmed.current = true;
+        }
+      }
     }
 
     const touched = vals.map((value, i) => ({ value: Math.max(value, frame.peaks[i]) - baselineRef.current[i], id: i as SensorId })).filter(x => x.value >= thresholdRef.current).map(x => x.id);
@@ -617,6 +631,7 @@ export function TrainerExperience() {
               processFrameRef.current(message.frame);
               setConnectionDetail('Receiving nine-sensor data over USB.');
             }
+            if (message?.kind === 'event' && message.name === 'ask') listener.current?.listenOnce();
             if (message?.kind === 'hello') setConnectionDetail('ChokeSense-9FSR identified · 50 Hz frames.');
           }
         }
@@ -654,7 +669,15 @@ export function TrainerExperience() {
           if (status === 'error') setWakeOn(false);
         },
       });
-      if (loadWakePreference()) listener.current.setWakeWord(true);
+      void requestMicrophone().then(granted => {
+        if (!mounted.current) return;
+        if (!granted) {
+          setListenStatus('error');
+          setListenDetail('Microphone access is off. Allow it in the address bar to ask questions.');
+          return;
+        }
+        if (loadWakePreference()) listener.current?.setWakeWord(true);
+      });
     }
     return () => {
       mounted.current = false;
@@ -769,7 +792,9 @@ export function TrainerExperience() {
         ? 'Say “Gemini, …” followed by your question.'
         : listenStatus === 'error'
           ? listenDetail
-          : 'Tap the mic and ask a question, or turn on the wake word.';
+          : scenario === 'unresponsive'
+            ? 'Tap the mic and ask a question, or turn on the wake word.'
+            : 'Press the chest sensor or tap the mic, then ask your question.';
 
   const heatmapRegion: SpatialRegion = view;
   const hasLiveRegionSignal = SPATIAL_REFERENCES[heatmapRegion].some(
@@ -800,13 +825,16 @@ export function TrainerExperience() {
     : null;
   const liveAmbiguous = phaseRegion !== null &&
     activeRegion === phaseRegion && livePhaseEstimate?.uncertainty === 'broad';
-  const activeWrong = active !== null && (
+  const sternumAsks = scenario !== 'unresponsive' && active === 8;
+  const activeWrong = active !== null && !sternumAsks && (
     scenario === 'cough' ||
     (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < SPATIAL_SETTINGS.borderlineScore)) ||
     (phase === 'cpr' && active !== 8)
   );
   const activeHint = active !== null
-    ? scenario === 'cough'
+    ? sternumAsks
+      ? 'Chest sensor is the ask button — go ahead and ask your question.'
+      : scenario === 'cough'
       ? 'An effective cough does not require physical intervention.'
       : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
         ? `${Math.round(livePhaseEstimate.score)}/100 approximate placement score. ${livePhaseEstimate.correction} Release to record or retry.`

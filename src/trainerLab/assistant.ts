@@ -2,10 +2,12 @@
 // question plus the current training state to Gemini, and return a short
 // answer for the caller to speak.
 
-import { isSpeaking } from './speech';
+import { isSpeaking, stopSpeech } from './speech';
 
-// Chrome's recogniser sometimes hears "Gemini" as one of these.
-const WAKE_WORD = /\b(?:hey\s+)?(gemini|jemini|geminy|jiminy|jemmy knee)\b[\s,.!?]*/i;
+// Chrome's recogniser sometimes hears "Gemini" as one of these. Only
+// matches at the start of a phrase, so bystanders saying "the Gemini booth"
+// don't trigger it.
+const WAKE_WORD = /^\s*(?:(?:hey|ok|okay)[\s,]+)?(gemini|jemini|geminy|jiminy|jemmy knee)\b[\s,.!?]*/i;
 // After a bare "Gemini", how long to wait for the question.
 const FOLLOW_UP_MS = 7000;
 const MAX_HISTORY_TURNS = 3;
@@ -19,7 +21,8 @@ Your answer is read aloud while their hands are busy, so:
 - The sensors only detect contact location and timing. They cannot measure force, compression depth, or whether an airway cleared, so never claim they do.
 - Do not contradict the sensor feedback in the state below; explain it instead.
 - This is training only. If someone describes a real emergency, tell them to call emergency services now.
-- If the question is unrelated to first aid or this trainer, say briefly that you can only help with the training.`;
+- If the question is unrelated to first aid or this trainer, say briefly that you can only help with the training.
+- Never say the word "Gemini": it is the wake word, and saying it would trigger the microphone.`;
 
 export type AssistantContext = {
   scenario: string;
@@ -124,6 +127,23 @@ export function listeningSupported(): boolean {
   return recognitionClass() !== null;
 }
 
+// Ask for mic access up front. Speech recognition can only show the
+// permission prompt after a click, but getUserMedia can prompt on load, and
+// once granted the chest sensor or wake word can start listening hands-free.
+export async function requestMicrophone(): Promise<boolean> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return false;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(track => track.stop());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type ListenerStatus = 'off' | 'standby' | 'listening' | 'error';
 
 type ListenerCallbacks = {
@@ -154,6 +174,8 @@ export class VoiceListener {
   }
 
   listenOnce(): void {
+    // Silence the app so the mic hears the question, not our own voice.
+    stopSpeech();
     this.oneShot = true;
     this.recognition?.abort();
     this.start(true);
@@ -243,23 +265,28 @@ export class VoiceListener {
       return;
     }
 
-    // Ignore our own voice coming back through the mic.
-    if (isSpeaking()) {
-      return;
-    }
-
+    // Waiting for the question after a bare "Gemini". Anything heard while
+    // the app is talking is probably our own voice coming back through the mic.
     if (Date.now() < this.awaitingUntil) {
+      if (isSpeaking()) {
+        return;
+      }
+
       this.awaitingUntil = 0;
       this.callbacks.onStatus('standby');
       this.callbacks.onQuestion(transcript);
       return;
     }
 
+    // No spoken cue contains the wake word, so a match is the trainee even
+    // while the app is talking: cut our speech off and take the question.
     const match = WAKE_WORD.exec(transcript);
 
     if (!match) {
       return;
     }
+
+    stopSpeech();
 
     const question = transcript.slice(match.index + match[0].length).trim();
 
