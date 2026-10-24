@@ -610,7 +610,7 @@ export function TrainerExperience() {
 
   function downloadSummary() {
     const data = {
-      product: 'ChokeSense', exportedAt: new Date().toISOString(),
+      product: 'Thrustworthy', exportedAt: new Date().toISOString(),
       scenario, connection, counts, thresholdADCAboveBaseline: threshold,
       baseline, events: history,
       spatialCalibration: {
@@ -620,7 +620,7 @@ export function TrainerExperience() {
       note: 'Training demonstration. FSR signals do not measure clinical force, CPR depth, or obstruction clearance.',
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = url; a.download = 'chokesense-session.json'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = 'thrustworthy-session.json'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
@@ -680,7 +680,7 @@ export function TrainerExperience() {
     <header className="topbar">
       <div className="brand"><Logo />
         <div>
-          <strong>ChokeSense</strong>
+          <strong>Thrustworthy</strong>
           <span>Hands-on first-aid learning</span></div></div>
       <div className="top-actions">
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
@@ -935,7 +935,7 @@ export function TrainerExperience() {
 
       <footer className="footer">
         <div>
-          <span className="footer-logo">✳</span> ChokeSense <span className="footer-sep">·</span> Demo training prototype</div>
+          <span className="footer-logo">✳</span> Thrustworthy <span className="footer-sep">·</span> Demo training prototype</div>
         <p>Adult scenarios based on AHA 2025 guidance. Not medical certification, not for use during an emergency. FSRs detect contact, not clinically effective force or compression depth.</p><a href="https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support" target="_blank" rel="noreferrer">Training reference ↗</a></footer>
     </main>
   </div>;
