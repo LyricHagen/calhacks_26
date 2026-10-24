@@ -12,6 +12,7 @@ import {
   signalPattern,
   simulatedContact,
   SPATIAL_REFERENCES,
+  SPATIAL_SETTINGS,
   type SpatialEstimate,
   type SpatialRegion,
   type SpatialSamples,
@@ -347,7 +348,7 @@ export function TrainerExperience() {
           heading: 'Placement uncertain',
           detail: `${placement.correction} Spatial calibration can improve the model.`,
         };
-      } else if (placement.score >= 50) {
+      } else if (placement.score >= SPATIAL_SETTINGS.acceptanceScore) {
         good = true;
 
         if (expected === 'back') {
@@ -362,16 +363,23 @@ export function TrainerExperience() {
           tone: 'success',
           heading: 'Estimated placement on target',
           detail: `${current} of 5 ${expected === 'back' ? 'back contacts' : 'abdominal contacts'} recorded. ` +
-            `Model target score: ${Math.round(placement.score)}/100. ` +
+            `Approximate placement score: ${Math.round(placement.score)}/100. ` +
             (current === 5 && expected === 'back'
               ? 'Now move to the abdomen for the next part of the practice sequence.'
               : 'Follow the next highlighted action.'),
+        };
+      } else if (placement.score >= SPATIAL_SETTINGS.borderlineScore) {
+        ambiguous = true;
+        result = {
+          tone: 'neutral',
+          heading: 'Close or uncertain — repeat contact',
+          detail: `${placement.correction} Approximate placement score: ${Math.round(placement.score)}/100.`,
         };
       } else {
         result = {
           tone: 'warning',
           heading: 'Adjust placement and retry',
-          detail: `${placement.correction} Estimated target score: ${Math.round(placement.score)}/100.`,
+          detail: `${placement.correction} Approximate placement score: ${Math.round(placement.score)}/100.`,
         };
       }
     }
@@ -658,16 +666,18 @@ export function TrainerExperience() {
   const livePhaseEstimate = phaseRegion && activeRegion === phaseRegion
     ? estimatePlacement(phaseRegion, readings, baseline, spatialSamples)
     : null;
+  const liveAmbiguous = phaseRegion !== null &&
+    activeRegion === phaseRegion && livePhaseEstimate?.uncertainty === 'broad';
   const activeWrong = active !== null && (
     scenario === 'cough' ||
-    (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < 50)) ||
+    (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < SPATIAL_SETTINGS.borderlineScore)) ||
     (phase === 'cpr' && active !== 8)
   );
   const activeHint = active !== null
     ? scenario === 'cough'
       ? 'An effective cough does not require physical intervention.'
       : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
-        ? `${Math.round(livePhaseEstimate.score)}/100 estimated placement score. ${livePhaseEstimate.correction} Release to register the action.`
+        ? `${Math.round(livePhaseEstimate.score)}/100 approximate placement score. ${livePhaseEstimate.correction} Release to record or retry.`
         : activeWrong
           ? 'Wrong region for this step. Follow the highlighted target.'
           : 'Contact detected. Release to register the action.'
@@ -765,7 +775,7 @@ export function TrainerExperience() {
                 <button type="button" className={view === 'front' ? 'on' : ''} onClick={() => setViewOverride('front')}>Front</button></div></div>
             <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap} />
             <div className="mannequin-guide">
-              <span className="legend-dot" /> Estimated contact likelihood from all sensors in this view. Back left/right are from the back-facing view.</div>
+              <span className="legend-dot" /> Smoothed contact estimate from nearby FSR readings; areas between sensors are inferred, not measured. Back left/right are from the back-facing view.</div>
           </article>
           <article className="coach-panel">
             <div className="coach-title">
@@ -773,26 +783,26 @@ export function TrainerExperience() {
               <div>
                 <div className="small-label">YOUR LIVE COACH</div>
                 <strong>Instant feedback</strong></div></div>
-            <div role="status" aria-live="polite" className={`feedback-box ${activeHint ? (activeWrong ? 'warning' : 'success') : feedback.tone}`}>
-              <div className="feedback-icon">{activeHint ? activeWrong ? '!' : '✓' : feedback.tone === 'success' ? '✓' : feedback.tone === 'warning' ? '!' : '◎'}
+            <div role="status" aria-live="polite" className={`feedback-box ${activeHint ? (liveAmbiguous ? 'neutral' : activeWrong ? 'warning' : 'success') : feedback.tone}`}>
+              <div className="feedback-icon">{activeHint ? liveAmbiguous ? '?' : activeWrong ? '!' : '✓' : feedback.tone === 'success' ? '✓' : feedback.tone === 'warning' ? '!' : '◎'}
               </div>
               <div>
-                <strong>{activeHint ? activeWrong ? 'Adjust your placement' : 'Contact detected' : feedback.heading}</strong>
+                <strong>{activeHint ? liveAmbiguous ? 'Placement uncertain' : activeWrong ? 'Adjust your placement' : 'Contact detected' : feedback.heading}</strong>
                 <p>{activeHint ?? feedback.detail}</p></div>
             </div>
             {visiblePlacement && scenario === 'severe' && <div className="spatial-score">
               <div className="spatial-score-head">
-                <span>Estimated target-region likelihood</span>
+                <span>Approximate target placement score</span>
                 <strong>{Math.round(visiblePlacement.score)}/100</strong>
               </div>
               <div className="spatial-track"><span style={{ width: `${visiblePlacement.score}%` }} /></div>
               <div className="spatial-score-note">
                 {visiblePlacement.calibrated ? 'Spatial references calibrated' : 'Uncalibrated preview model'}
                 {' · '}
-                {visiblePlacement.uncertainty} spatial certainty
+                {visiblePlacement.uncertainty === 'broad' ? 'Placement uncertain' : 'Approximate localisation'}
               </div>
               <p>{visiblePlacement.correction}</p>
-              <small>Model-derived placement only. This is not a measured force or a clinically validated probability.</small>
+              <small>Sparse-sensor estimate only; not a measured force, exact position, or clinically validated probability.</small>
             </div>}
             <div className="live-readout">
               <span className="readout-label">LIVE SENSOR</span>

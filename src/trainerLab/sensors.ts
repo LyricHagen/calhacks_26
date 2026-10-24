@@ -194,6 +194,7 @@ type DetectorState = {
   peak: number;
   best: SensorId;
   pattern: NineReadings;
+  patternEnergy: number;
   started: number;
   lastEnd: number;
 };
@@ -204,6 +205,7 @@ function initialStates(): DetectorState[] {
     peak: 0,
     best: group.ids[0],
     pattern: emptyReadings(),
+    patternEnergy: 0,
     started: 0,
     lastEnd: -Infinity,
   }));
@@ -240,6 +242,13 @@ export class NineSensorDetector {
 
       const strongest = ranked[0];
       const liveMax = Math.max(...ranked.map(item => item.live));
+      const snapshot = emptyReadings();
+      let snapshotEnergy = 0;
+
+      for (const id of group.ids) {
+        snapshot[id] = Math.max(values[id], peaks[id]);
+        snapshotEnergy += Math.max(0, snapshot[id] - baseline[id]);
+      }
 
       if (!state.active) {
         if (
@@ -249,22 +258,17 @@ export class NineSensorDetector {
           state.active = true;
           state.peak = strongest.peak;
           state.best = strongest.id;
-          state.pattern = emptyReadings();
-          for (const id of group.ids) {
-            state.pattern[id] = Math.max(values[id], peaks[id]);
-          }
+          state.pattern = snapshot;
+          state.patternEnergy = snapshotEnergy;
           state.started = time;
         }
 
         return;
       }
 
-      for (const id of group.ids) {
-        state.pattern[id] = Math.max(
-          state.pattern[id],
-          values[id],
-          peaks[id],
-        );
+      if (snapshotEnergy > state.patternEnergy) {
+        state.pattern = snapshot;
+        state.patternEnergy = snapshotEnergy;
       }
 
       if (strongest.peak > state.peak) {
@@ -275,7 +279,11 @@ export class NineSensorDetector {
       if (liveMax <= releaseThreshold) {
         events.push({
           type: group.type,
-          sensor: state.best,
+          sensor: group.ids.reduce((best, id) =>
+            state.pattern[id] - baseline[id] > state.pattern[best] - baseline[best]
+              ? id
+              : best,
+          group.ids[0]),
           peak: state.peak,
           time,
           durationMs: Math.max(0, time - state.started),
@@ -286,6 +294,7 @@ export class NineSensorDetector {
         state.active = false;
         state.lastEnd = time;
         state.peak = 0;
+        state.patternEnergy = 0;
       }
     });
 
