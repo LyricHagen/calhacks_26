@@ -17,7 +17,8 @@ import {
   type SpatialRegion,
   type SpatialSamples,
 } from './trainerLab/spatialModel';
-import { chime, preloadCues, speak, speakAnswer, speechSupported, stopSpeech } from './trainerLab/speech';
+import { BACK_TO_FRONT_CUE, PHASE_GUIDES } from './trainerLab/instructions';
+import { preloadCues, speak, speakAnswer, speechSupported, stopSpeech } from './trainerLab/speech';
 import {
   askGemini, listeningSupported, requestMicrophone, VoiceListener,
   type AssistantContext, type ListenerStatus,
@@ -66,7 +67,8 @@ function loadVoicePreference(): boolean {
   try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch { return true; }
 }
 function loadWakePreference(): boolean {
-  try { return localStorage.getItem(WAKE_KEY) === 'on'; } catch { return false; }
+  // On unless the user has switched it off: it's the only hands-free way to ask.
+  try { return localStorage.getItem(WAKE_KEY) !== 'off'; } catch { return true; }
 }
 const prettyTime = () => new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -263,6 +265,7 @@ export function TrainerExperience() {
   const [wakeOn, setWakeOn] = useState(() => listeningSupported() && loadWakePreference());
   const [listenStatus, setListenStatus] = useState<ListenerStatus>('off');
   const [listenDetail, setListenDetail] = useState('');
+  const [heard, setHeard] = useState('');
   const [thinking, setThinking] = useState(false);
   const [exchange, setExchange] = useState<{ question: string; answer: string } | null>(null);
 
@@ -287,7 +290,6 @@ export function TrainerExperience() {
   const listener = useRef<VoiceListener | null>(null);
   const assistantContext = useRef<AssistantContext | null>(null);
   const handleQuestionRef = useRef<(question: string) => void>(() => { });
-  const askArmed = useRef(true);
 
   scenarioRef.current = scenario;
   modeRef.current = mode;
@@ -307,7 +309,8 @@ export function TrainerExperience() {
   const liveSensor = active !== null ? SENSOR_NAMES[active] : 'No pressure detected';
 
   function say(text: string | undefined) {
-    if (voiceRef.current && text) speak(text);
+    // Stay quiet while a question is being asked, or the mic hears our cue instead.
+    if (voiceRef.current && text && !listener.current?.isCapturing) speak(text);
   }
 
   function toggleVoice() {
@@ -454,8 +457,8 @@ export function TrainerExperience() {
           spoken: current < 5
             ? `Good. ${COUNT_WORDS[current]}.`
             : expected === 'back'
-              ? 'Five back blows. Now give abdominal thrusts.'
-              : 'Five thrusts. Reassess.',
+              ? BACK_TO_FRONT_CUE
+              : PHASE_GUIDES.review.spoken,
         };
       } else if (placement.score >= SPATIAL_SETTINGS.borderlineScore) {
         ambiguous = true;
@@ -523,21 +526,8 @@ export function TrainerExperience() {
     readingWindow.current.push(vals);
     if (readingWindow.current.length > 75) readingWindow.current.shift();
     if (modeRef.current === 'train') {
-      // Outside CPR practice the sternum sensor doubles as the ask-Gemini button,
-      // so its presses aren't graded as a wrong action.
-      const sternumAsks = scenarioRef.current !== 'unresponsive';
       const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks);
-      for (const event of events) if (!(sternumAsks && event.type === 'cpr')) evaluate(event);
-
-      if (sternumAsks) {
-        const sternum = Math.max(vals[8], frame.peaks[8]) - baselineRef.current[8];
-        if (askArmed.current && sternum >= thresholdRef.current) {
-          askArmed.current = false;
-          listener.current?.listenOnce();
-        } else if (!askArmed.current && vals[8] - baselineRef.current[8] <= thresholdRef.current * 0.38) {
-          askArmed.current = true;
-        }
-      }
+      for (const event of events) evaluate(event);
     }
 
     const touched = vals.map((value, i) => ({ value: Math.max(value, frame.peaks[i]) - baselineRef.current[i], id: i as SensorId })).filter(x => x.value >= thresholdRef.current).map(x => x.id);
@@ -566,11 +556,7 @@ export function TrainerExperience() {
     setScenario(next);
     scenarioRef.current = next;
     setViewOverride(null);
-    say(next === 'cough'
-      ? 'Effective cough. Encourage them to keep coughing.'
-      : next === 'unresponsive'
-        ? 'Unresponsive. Call for help and begin CPR on the centre of the chest.'
-        : 'Severe choking. Give five back blows between the shoulder blades.');
+    say(PHASE_GUIDES[next === 'cough' ? 'cough' : next === 'unresponsive' ? 'cpr' : 'back'].spoken);
     setFeedback(next === 'cough' ? { tone: 'neutral', heading: 'A strong cough is a good sign', detail: 'Encourage the person to keep coughing. Watch for a change to weak or absent cough, inability to speak, or worsening responsiveness.' } : next === 'unresponsive' ? { tone: 'neutral', heading: 'Begin CPR practice', detail: 'Activate emergency response, start CPR with compressions and follow a certified adult BLS protocol. Only remove a visible object; never perform a blind finger sweep.' } : startFeedback);
   }
 
@@ -631,7 +617,6 @@ export function TrainerExperience() {
               processFrameRef.current(message.frame);
               setConnectionDetail('Receiving nine-sensor data over USB.');
             }
-            if (message?.kind === 'event' && message.name === 'ask') listener.current?.listenOnce();
             if (message?.kind === 'hello') setConnectionDetail('ChokeSense-9FSR identified · 50 Hz frames.');
           }
         }
@@ -661,7 +646,7 @@ export function TrainerExperience() {
     if (listeningSupported()) {
       listener.current = new VoiceListener({
         onQuestion: question => handleQuestionRef.current(question),
-        onWake: chime,
+        onHeard: text => { if (mounted.current) setHeard(text); },
         onStatus: (status, detail) => {
           if (!mounted.current) return;
           setListenStatus(status);
@@ -673,7 +658,7 @@ export function TrainerExperience() {
         if (!mounted.current) return;
         if (!granted) {
           setListenStatus('error');
-          setListenDetail('Microphone access is off. Allow it in the address bar to ask questions.');
+          setListenDetail('Microphone access is off. Allow it from the icon in the address bar to ask questions.');
           return;
         }
         if (loadWakePreference()) listener.current?.setWakeWord(true);
@@ -748,7 +733,7 @@ export function TrainerExperience() {
     const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
     countsRef.current = next; setCounts(next);
     detector.current.reset(); setViewOverride(null);
-    say('Next round. Five back blows.');
+    say(PHASE_GUIDES.back.spoken);
     setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
   }
 
@@ -768,33 +753,38 @@ export function TrainerExperience() {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  let instruction = '', description = '', guide = '', promptTag = '';
-  if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; description = 'Support the person leaning forward. Aim between the shoulder blades with the heel of your hand. Pause about a second between blows.'; guide = 'Target: between the shoulder blades'; }
-  if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; description = 'Position your fist above the navel and below the breastbone. Practise the inward-and-upward motion on the training mannequin, pausing about a second between thrusts.'; guide = 'Target: upper abdomen, above the navel'; }
-  if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; description = 'The five-and-five practice round is complete. If obstruction persists and the person remains responsive, repeat the cycle.'; guide = 'Practice round recorded — not airway clearance'; }
-  if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; description = 'An effective cough can clear a mild obstruction. Monitor closely for worsening signs; do not deliver back blows or abdominal thrusts while coughing remains effective.'; guide = 'No sensor contact needed in this scenario'; }
-  if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; description = 'Activate emergency response and practise central chest hand placement on the single sternum sensor. Contact alone does not validate CPR quality.'; guide = 'Target: centre of chest over the sternum'; }
+  let instruction = '', guide = '', promptTag = '';
+  if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; guide = 'Target: between the shoulder blades'; }
+  if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; guide = 'Target: upper abdomen, above the navel'; }
+  if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; guide = 'Practice round recorded — not airway clearance'; }
+  if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; guide = 'No sensor contact needed in this scenario'; }
+  if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; guide = 'Target: centre of chest over the sternum'; }
 
+  const howTo = PHASE_GUIDES[phase];
   assistantContext.current = {
     scenario: scenario === 'severe' ? 'Adult severe choking (responsive)' : scenario === 'cough' ? 'Adult mild obstruction with an effective cough' : 'Unresponsive adult, CPR placement practice',
     step: promptTag,
-    instruction: `${instruction}. ${description} ${guide}.`,
+    instruction: `${instruction}. Steps: ${howTo.steps.join('; ')}. ${guide}.`,
     progress: scenario === 'severe'
       ? `Round ${counts.rounds + 1}: ${counts.back}/5 back blows, ${counts.front}/5 abdominal thrusts. ${counts.correct} on target, ${counts.errors} needing correction.`
       : scenario === 'unresponsive' ? `${counts.cpr} sternum contacts recorded.` : 'No physical intervention in this scenario.',
     lastFeedback: `${feedback.heading}. ${feedback.detail}`,
+    // Peak ADC is left out on purpose: it isn't force, and Gemini would read it as such.
+    recentHits: [...history].reverse().map((hit, index) => {
+      const action = hit.label.startsWith('back') ? 'Back blow' : hit.label.startsWith('front') ? 'Abdominal thrust' : hit.label;
+      const score = hit.placementScore === null ? '' : `, placement score ${hit.placementScore}/100`;
+      return `${index + 1}. ${hit.time} ${action}: ${hit.verdict} (${hit.good ? 'counted' : 'not counted'}${score})`;
+    }),
   };
   const listenText = thinking
     ? 'Thinking…'
     : listenStatus === 'listening'
-      ? 'Listening… ask your question.'
+      ? heard ? `Hearing: “${heard}”` : 'Listening… ask your question.'
       : listenStatus === 'standby'
         ? 'Say “Gemini, …” followed by your question.'
         : listenStatus === 'error'
           ? listenDetail
-          : scenario === 'unresponsive'
-            ? 'Tap the mic and ask a question, or turn on the wake word.'
-            : 'Press the chest sensor or tap the mic, then ask your question.';
+          : 'Tap the mic and ask a question, or turn on the wake word.';
 
   const heatmapRegion: SpatialRegion = view;
   const hasLiveRegionSignal = SPATIAL_REFERENCES[heatmapRegion].some(
@@ -825,16 +815,13 @@ export function TrainerExperience() {
     : null;
   const liveAmbiguous = phaseRegion !== null &&
     activeRegion === phaseRegion && livePhaseEstimate?.uncertainty === 'broad';
-  const sternumAsks = scenario !== 'unresponsive' && active === 8;
-  const activeWrong = active !== null && !sternumAsks && (
+  const activeWrong = active !== null && (
     scenario === 'cough' ||
     (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < SPATIAL_SETTINGS.borderlineScore)) ||
     (phase === 'cpr' && active !== 8)
   );
   const activeHint = active !== null
-    ? sternumAsks
-      ? 'Chest sensor is the ask button — go ahead and ask your question.'
-      : scenario === 'cough'
+    ? scenario === 'cough'
       ? 'An effective cough does not require physical intervention.'
       : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
         ? `${Math.round(livePhaseEstimate.score)}/100 approximate placement score. ${livePhaseEstimate.correction} Release to record or retry.`
@@ -900,7 +887,11 @@ export function TrainerExperience() {
             <span className="step-tag">
               <span className="step-tag-dot" />{promptTag}</span>
             <h2>{instruction}</h2>
-            <p className="step-desc">{description}</p>
+            <ol className="step-list">
+              {howTo.steps.map(step => <li key={step}>{step}</li>)}
+            </ol>
+            <button type="button" className="quiet-button hear-again" disabled={listenStatus === 'listening'} onClick={() => speak(howTo.spoken)}>
+              <Speaker on /> Hear again</button>
             <div className="guide-callout">
               <span className="target-symbol">⌖</span>
               <div>
@@ -956,8 +947,8 @@ export function TrainerExperience() {
                 <span className="small-label">ASK GEMINI</span>
                 <label className="assistant-toggle">
                   <input type="checkbox" checked={wakeOn} onChange={toggleWake} /> Listen for “Gemini”</label></div>
-              <button type="button" className={`button-outline small assistant-mic ${listenStatus === 'listening' ? 'on' : ''}`} disabled={thinking} onClick={() => listener.current?.listenOnce()}>
-                <Mic />{listenStatus === 'listening' ? 'Listening…' : 'Ask a question'}</button>
+              <button type="button" className={`button-outline small assistant-mic ${listenStatus === 'listening' ? 'on' : ''}`} disabled={thinking} onClick={() => listener.current?.ask()}>
+                <Mic />{listenStatus === 'listening' ? 'Listening… tap to send' : 'Ask a question'}</button>
               <p className="assistant-status" role="status">{listenText}</p>
               {exchange && <div className="assistant-exchange">
                 <p className="assistant-q">“{exchange.question}”</p>

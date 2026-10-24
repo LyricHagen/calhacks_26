@@ -59,8 +59,7 @@ export type NineFrame = {
 
 export type NineMessage =
   | { kind: 'hello'; hz: number; names: string[] }
-  | { kind: 'frame'; frame: NineFrame }
-  | { kind: 'event'; name: 'ask' };
+  | { kind: 'frame'; frame: NineFrame };
 
 export const EMPTY: NineReadings = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -136,11 +135,6 @@ export class NineSensorProtocol {
             : 0,
         names: [...data.pads],
       };
-    }
-
-    // Push-to-talk button on the ESP32.
-    if (data.event === 'ask') {
-      return { kind: 'event', name: 'ask' };
     }
 
     if (data.schema !== undefined && data.schema !== 'fsr9-v1') {

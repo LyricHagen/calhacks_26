@@ -2,14 +2,23 @@
 // question plus the current training state to Gemini, and return a short
 // answer for the caller to speak.
 
-import { isSpeaking, stopSpeech } from './speech';
+import { chime, stopSpeech } from './speech';
 
 // Chrome's recogniser sometimes hears "Gemini" as one of these. Only
 // matches at the start of a phrase, so bystanders saying "the Gemini booth"
 // don't trigger it.
 const WAKE_WORD = /^\s*(?:(?:hey|ok|okay)[\s,]+)?(gemini|jemini|geminy|jiminy|jemmy knee)\b[\s,.!?]*/i;
-// After a bare "Gemini", how long to wait for the question.
-const FOLLOW_UP_MS = 7000;
+// How long a mic press (or bare "Gemini") waits for the question to start.
+const START_TIMEOUT_MS = 8000;
+// Once they're talking, this much silence means the question is finished.
+const END_OF_QUESTION_MS = 1800;
+// Hard stop once they've started talking, in case noise never lets it go quiet.
+const MAX_QUESTION_MS = 15000;
+// Pause between Chrome ending a session and starting the next one.
+const RESTART_DELAY_MS = 250;
+// More restarts than this within the window means recognition is failing, not idling.
+const MAX_RESTARTS = 6;
+const RESTART_WINDOW_MS = 10000;
 const MAX_HISTORY_TURNS = 3;
 const ASK_TIMEOUT_MS = 12000;
 
@@ -30,6 +39,8 @@ export type AssistantContext = {
   instruction: string;
   progress: string;
   lastFeedback: string;
+  // One line per recent contact, oldest first.
+  recentHits: string[];
 };
 
 type Turn = { role: 'user' | 'model'; text: string };
@@ -47,6 +58,7 @@ export async function askGemini(question: string, state: AssistantContext): Prom
     `On-screen instruction: ${state.instruction}`,
     `Progress: ${state.progress}`,
     `Latest sensor feedback: ${state.lastFeedback}`,
+    `Recent contacts (oldest first):\n${state.recentHits.length ? state.recentHits.join('\n') : 'None yet.'}`,
   ].join('\n');
 
   const contents = [
@@ -94,6 +106,24 @@ export async function askGemini(question: string, state: AssistantContext): Prom
   return answer;
 }
 
+// ---------- Microphone ----------
+
+// Ask for mic access up front. Speech recognition can only show the
+// permission prompt after a click, but getUserMedia can prompt on load.
+export async function requestMicrophone(): Promise<boolean> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return false;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(track => track.stop());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Speech recognition ----------
 
 type RecognitionResultList = ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
@@ -127,104 +157,222 @@ export function listeningSupported(): boolean {
   return recognitionClass() !== null;
 }
 
-// Ask for mic access up front. Speech recognition can only show the
-// permission prompt after a click, but getUserMedia can prompt on load, and
-// once granted the chest sensor or wake word can start listening hands-free.
-export async function requestMicrophone(): Promise<boolean> {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return false;
-  }
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach(track => track.stop());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export type ListenerStatus = 'off' | 'standby' | 'listening' | 'error';
 
 type ListenerCallbacks = {
   onQuestion: (question: string) => void;
-  onWake: () => void;
   onStatus: (status: ListenerStatus, detail?: string) => void;
+  // Live transcript while a question is being captured ('' when cleared).
+  onHeard?: (text: string) => void;
 };
 
-// One recogniser at a time: Chrome won't run two. Wake mode listens
-// continuously and restarts itself; listenOnce() takes over for a single
-// utterance, then hands back to wake mode if it is enabled.
+const ERROR_MESSAGES: Record<string, string> = {
+  'not-allowed': 'Microphone access is blocked. Allow it from the icon in the address bar.',
+  'service-not-allowed': 'Microphone access is blocked. Allow it from the icon in the address bar.',
+  'audio-capture': 'No microphone found. Check that one is connected and selected.',
+  network: 'Speech recognition needs internet: Chrome sends the audio to Google to transcribe it.',
+};
+
+// Wraps Chrome's recogniser with the parts it gets wrong:
+// - It decides a question is over at the first pause, so we always run it in
+//   continuous mode and decide the end ourselves from a silence timer.
+// - Sessions end on their own (silence, ~60 s, network blips), so we restart
+//   them, but only after the previous one has fully ended: starting a new
+//   one while the old is shutting down silently fails.
+// - A restart loop means it is broken, so we stop and say why.
 export class VoiceListener {
   private recognition: Recognition | null = null;
+  private stopping = false;
   private wakeEnabled = false;
-  private oneShot = false;
-  private awaitingUntil = 0;
+  private capturing = false;
+  private question = '';
+  private partial = '';
+  private error = '';
+  private restarts: number[] = [];
+  private startTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private capTimer: ReturnType<typeof setTimeout> | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private callbacks: ListenerCallbacks) {}
 
-  setWakeWord(enabled: boolean): void {
-    this.wakeEnabled = enabled;
-
-    if (enabled && !this.recognition) {
-      this.start(false);
-    } else if (!enabled && !this.oneShot) {
-      this.stop();
-    }
+  // True while waiting for or hearing a question; callers should stay quiet.
+  get isCapturing(): boolean {
+    return this.capturing;
   }
 
-  listenOnce(): void {
-    // Silence the app so the mic hears the question, not our own voice.
-    stopSpeech();
-    this.oneShot = true;
-    this.recognition?.abort();
-    this.start(true);
+  setWakeWord(enabled: boolean): void {
+    this.wakeEnabled = enabled;
+    this.error = '';
+
+    if (enabled) {
+      this.ensureRunning();
+    } else if (!this.capturing) {
+      this.stopRecognition();
+    }
+
+    this.emitStatus();
+  }
+
+  // Mic button: start a question, or send it early if one is in progress.
+  ask(): void {
+    if (this.capturing) {
+      this.finishQuestion();
+    } else {
+      this.openQuestion('');
+    }
   }
 
   dispose(): void {
     this.wakeEnabled = false;
-    this.oneShot = false;
-    this.stop();
+    this.closeQuestion();
+    this.stopRecognition();
   }
 
-  private stop(): void {
-    const current = this.recognition;
-    this.recognition = null;
-    current?.abort();
-    this.callbacks.onStatus('off');
+  private openQuestion(initial: string): void {
+    // Silence the app so the mic hears the question, not our own voice.
+    stopSpeech();
+    chime();
+    this.error = '';
+    this.capturing = true;
+    this.question = initial;
+    this.partial = '';
+    this.callbacks.onHeard?.(initial);
+    this.ensureRunning();
+    this.emitStatus();
+
+    if (initial) {
+      this.heardSpeech();
+    } else {
+      this.startTimer = setTimeout(() => this.finishQuestion(), START_TIMEOUT_MS);
+    }
   }
 
-  private start(oneShot: boolean): void {
+  // Something new was heard: restart the end-of-question countdown.
+  private heardSpeech(): void {
+    this.clearTimer('startTimer');
+
+    if (!this.capTimer) {
+      this.capTimer = setTimeout(() => this.finishQuestion(), MAX_QUESTION_MS);
+    }
+
+    this.clearTimer('silenceTimer');
+    this.silenceTimer = setTimeout(() => this.finishQuestion(), END_OF_QUESTION_MS);
+  }
+
+  private finishQuestion(): void {
+    if (!this.capturing) {
+      return;
+    }
+
+    // Chrome may never finalise the last phrase, so include the latest partial text.
+    const question = `${this.question} ${this.partial}`.trim();
+    console.debug('[voice] question finished:', question || '(nothing heard)');
+    this.closeQuestion();
+
+    if (!this.wakeEnabled) {
+      this.stopRecognition();
+    }
+
+    this.emitStatus();
+
+    if (question.length > 2) {
+      this.callbacks.onQuestion(question);
+    }
+  }
+
+  private closeQuestion(): void {
+    this.capturing = false;
+    this.question = '';
+    this.partial = '';
+    this.clearTimer('startTimer');
+    this.clearTimer('silenceTimer');
+    this.clearTimer('capTimer');
+    this.callbacks.onHeard?.('');
+  }
+
+  private clearTimer(name: 'startTimer' | 'silenceTimer' | 'capTimer' | 'restartTimer'): void {
+    const timer = this[name];
+
+    if (timer) {
+      clearTimeout(timer);
+    }
+
+    this[name] = null;
+  }
+
+  private get wanted(): boolean {
+    return this.wakeEnabled || this.capturing;
+  }
+
+  private emitStatus(): void {
+    if (this.error) {
+      this.callbacks.onStatus('error', this.error);
+    } else if (this.capturing) {
+      this.callbacks.onStatus('listening');
+    } else if (this.wakeEnabled) {
+      this.callbacks.onStatus('standby');
+    } else {
+      this.callbacks.onStatus('off');
+    }
+  }
+
+  private fail(message: string): void {
+    console.debug('[voice] giving up:', message);
+    this.error = message;
+    this.wakeEnabled = false;
+    this.closeQuestion();
+    this.stopRecognition();
+    this.emitStatus();
+  }
+
+  private stopRecognition(): void {
+    this.clearTimer('restartTimer');
+
+    if (this.recognition && !this.stopping) {
+      this.stopping = true;
+      this.recognition.abort();
+    }
+  }
+
+  private ensureRunning(): void {
+    // Already running, or a restart is queued. If it is shutting down,
+    // onend will see that we still want it and start a fresh one.
+    if (this.recognition || this.restartTimer) {
+      return;
+    }
+
     const Recognition = recognitionClass();
 
     if (!Recognition) {
-      this.callbacks.onStatus('error', 'Speech recognition needs Chrome or Edge.');
+      this.fail('Speech recognition needs Chrome or Edge.');
       return;
     }
 
     const recognition = new Recognition();
     recognition.lang = 'en-US';
-    recognition.continuous = !oneShot;
-    recognition.interimResults = false;
-    this.recognition = recognition;
+    recognition.continuous = true;
+    // Partial results tell us the trainee is still mid-sentence.
+    recognition.interimResults = true;
 
     recognition.onresult = event => {
       for (let index = event.resultIndex; index < event.results.length; index++) {
         const result = event.results[index];
-
-        if (result.isFinal) {
-          this.handleTranscript(result[0].transcript.trim(), oneShot);
-        }
+        this.handleResult(result[0].transcript.trim(), result.isFinal);
       }
     };
 
     recognition.onerror = event => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        this.wakeEnabled = false;
-        this.oneShot = false;
-        this.callbacks.onStatus('error', 'Microphone access was blocked.');
+      console.debug('[voice] recognition error:', event.error);
+      const message = ERROR_MESSAGES[event.error];
+
+      if (message && event.error !== 'network') {
+        this.fail(message);
+      } else if (event.error === 'network') {
+        // Often a blip; only give up if it keeps happening (see restart loop check).
+        this.error = '';
       }
-      // 'no-speech' / 'aborted' / 'network' just end the session; onend restarts.
+      // 'no-speech' / 'aborted' just end the session; onend decides what next.
     };
 
     recognition.onend = () => {
@@ -233,76 +381,79 @@ export class VoiceListener {
       }
 
       this.recognition = null;
+      this.stopping = false;
 
-      if (oneShot) {
-        this.oneShot = false;
-      }
-
-      if (this.wakeEnabled) {
-        // Chrome ends continuous sessions after silence; keep listening.
-        this.start(false);
-      } else {
-        this.callbacks.onStatus('off');
+      if (this.wanted) {
+        this.scheduleRestart();
       }
     };
 
     try {
       recognition.start();
-      this.callbacks.onStatus(oneShot ? 'listening' : 'standby');
-    } catch {
-      this.recognition = null;
-      this.callbacks.onStatus('error', 'Could not start the microphone.');
+      this.recognition = recognition;
+      console.debug('[voice] recognition started');
+    } catch (error) {
+      console.debug('[voice] could not start recognition:', error);
+      this.fail('Could not start the microphone.');
     }
   }
 
-  private handleTranscript(transcript: string, oneShot: boolean): void {
+  private scheduleRestart(): void {
+    const now = Date.now();
+    this.restarts = this.restarts.filter(time => now - time < RESTART_WINDOW_MS);
+    this.restarts.push(now);
+
+    if (this.restarts.length > MAX_RESTARTS) {
+      this.restarts = [];
+      this.fail(ERROR_MESSAGES.network);
+      return;
+    }
+
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+
+      if (this.wanted) {
+        this.ensureRunning();
+      }
+    }, RESTART_DELAY_MS);
+  }
+
+  private handleResult(transcript: string, isFinal: boolean): void {
     if (!transcript) {
       return;
     }
 
-    if (oneShot) {
-      this.callbacks.onQuestion(transcript);
-      return;
-    }
+    if (this.capturing) {
+      console.debug(`[voice] heard (${isFinal ? 'final' : 'partial'}):`, transcript);
 
-    // Waiting for the question after a bare "Gemini". Anything heard while
-    // the app is talking is probably our own voice coming back through the mic.
-    if (Date.now() < this.awaitingUntil) {
-      if (isSpeaking()) {
+      if (isFinal) {
+        this.question = `${this.question} ${transcript}`.trim();
+        this.partial = '';
+      } else if (transcript === this.partial) {
+        // Unchanged partials are usually background noise; don't let them
+        // hold the question open.
         return;
+      } else {
+        this.partial = transcript;
       }
 
-      this.awaitingUntil = 0;
-      this.callbacks.onStatus('standby');
-      this.callbacks.onQuestion(transcript);
+      this.callbacks.onHeard?.(`${this.question} ${this.partial}`.trim());
+      this.heardSpeech();
       return;
     }
 
-    // No spoken cue contains the wake word, so a match is the trainee even
-    // while the app is talking: cut our speech off and take the question.
+    // Wake word: only complete phrases, only when enabled. No spoken cue
+    // contains "Gemini", so a match is the trainee even while the app is
+    // talking; openQuestion() cuts our speech off.
+    if (!isFinal || !this.wakeEnabled) {
+      return;
+    }
+
     const match = WAKE_WORD.exec(transcript);
 
-    if (!match) {
-      return;
-    }
-
-    stopSpeech();
-
-    const question = transcript.slice(match.index + match[0].length).trim();
-
-    if (question.length > 2) {
-      this.callbacks.onQuestion(question);
-    } else {
-      // Bare "Gemini": wait for the question in the next phrase.
-      this.awaitingUntil = Date.now() + FOLLOW_UP_MS;
-      this.callbacks.onWake();
-      this.callbacks.onStatus('listening');
-      setTimeout(() => {
-        if (this.awaitingUntil && Date.now() >= this.awaitingUntil) {
-          this.awaitingUntil = 0;
-          if (this.recognition) this.callbacks.onStatus('standby');
-        }
-      }, FOLLOW_UP_MS + 50);
+    if (match) {
+      console.debug('[voice] wake word:', transcript);
+      this.openQuestion(transcript.slice(match.index + match[0].length).trim());
     }
   }
 }

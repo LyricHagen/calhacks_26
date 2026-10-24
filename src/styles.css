@@ -1868,3 +1868,40 @@ a {
 .assistant-a {
   color: #20413a;
 }
+
+.step-list {
+  margin: 0 0 10px;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: step;
+  display: grid;
+  gap: 8px;
+}
+
+.step-list li {
+  counter-increment: step;
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #57746c;
+}
+
+.step-list li::before {
+  content: counter(step);
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e5f7ef;
+  color: #08786b;
+  font-size: 11px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+
+.hear-again {
+  margin: 0 0 18px -10px;
+}

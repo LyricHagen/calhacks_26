@@ -3,6 +3,8 @@
 // playback is instant. Until a cue is cached (or if Gemini is unavailable),
 // the browser's built-in speech synthesis says it instead.
 
+import { GUIDE_CUES } from './instructions';
+
 const CACHE_NAME = 'thrustworthy-gemini-tts-v1';
 const VOICE_NAME = 'Kore';
 const STYLE_PROMPT = 'Say in a calm, clear, encouraging first-aid coach voice:';
@@ -12,13 +14,8 @@ const ANSWER_TTS_TIMEOUT_MS = 5000;
 // Fixed cues fetched up front. Anything not listed is fetched the first time it is spoken.
 export const PRELOAD_CUES = [
   'Voice coaching on.',
-  'Severe choking. Give five back blows between the shoulder blades.',
-  'Effective cough. Encourage them to keep coughing.',
-  'Unresponsive. Call for help and begin CPR on the centre of the chest.',
-  'Next round. Five back blows.',
+  ...GUIDE_CUES,
   'Good. one.', 'Good. two.', 'Good. three.', 'Good. four.',
-  'Five back blows. Now give abdominal thrusts.',
-  'Five thrusts. Reassess.',
   'Too high. Move down.',
   'Too low. Move up.',
   'Off centre. Move to the middle.',
@@ -66,6 +63,8 @@ if (speechSupported()) {
   });
 }
 
+let activeUtterance: SpeechSynthesisUtterance | null = null;
+
 function speakWithBrowser(text: string): void {
   if (!speechSupported()) {
     return;
@@ -79,6 +78,15 @@ function speakWithBrowser(text: string): void {
   }
 
   utterance.rate = 1.1;
+  // Track our own utterance: speechSynthesis.speaking can stay true after cancel().
+  activeUtterance = utterance;
+  const done = () => {
+    if (activeUtterance === utterance) {
+      activeUtterance = null;
+    }
+  };
+  utterance.onend = done;
+  utterance.onerror = done;
   window.speechSynthesis.speak(utterance);
 }
 
@@ -294,7 +302,7 @@ export async function speakAnswer(text: string): Promise<void> {
 }
 
 export function isSpeaking(): boolean {
-  return currentSource !== null || (speechSupported() && window.speechSynthesis.speaking);
+  return currentSource !== null || activeUtterance !== null;
 }
 
 // Short beep acknowledging the wake word; not a word, so the mic won't transcribe it.
@@ -315,6 +323,7 @@ export function stopSpeech(): void {
   speechToken += 1;
   try { currentSource?.stop(); } catch {}
   currentSource = null;
+  activeUtterance = null;
 
   if (speechSupported()) {
     window.speechSynthesis.cancel();
