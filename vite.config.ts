@@ -4,15 +4,19 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   // No VITE_ prefix: the key stays on the dev server and never reaches the bundle.
   const env = loadEnv(mode, '.', '');
-  const model = env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+  const ttsModel = env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+  const chatModel = env.GEMINI_CHAT_MODEL || 'gemini-3.1-flash-lite';
+
+  const gemini = (model: string): ProxyOptions => ({
+    target: 'https://generativelanguage.googleapis.com',
+    changeOrigin: true,
+    rewrite: () => `/v1beta/models/${model}:generateContent`,
+    headers: { 'x-goog-api-key': env.GEMINI_API_KEY ?? '' },
+  });
 
   const proxy: Record<string, ProxyOptions> = {
-    '/api/tts': {
-      target: 'https://generativelanguage.googleapis.com',
-      changeOrigin: true,
-      rewrite: () => `/v1beta/models/${model}:generateContent`,
-      headers: { 'x-goog-api-key': env.GEMINI_API_KEY ?? '' },
-    },
+    '/api/tts': gemini(ttsModel),
+    '/api/ask': gemini(chatModel),
   };
 
   return {

@@ -1806,3 +1806,65 @@ a {
     transition: none;
   }
 }
+
+.assistant-box {
+  padding: 14px 15px;
+  border-radius: 12px;
+  border: 1px solid #dceae3;
+  background: #f8fcf9;
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assistant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #57746c;
+  cursor: pointer;
+}
+
+.assistant-mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.assistant-mic.on {
+  border-color: #0eab93;
+  color: #04877b;
+  box-shadow: 0 0 0 4px #dcf9e8;
+}
+
+.assistant-status {
+  margin: 0;
+  font-size: 12px;
+  color: #71867d;
+}
+
+.assistant-exchange p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.assistant-q {
+  color: #57746c;
+  font-style: italic;
+  margin-bottom: 6px !important;
+}
+
+.assistant-a {
+  color: #20413a;
+}

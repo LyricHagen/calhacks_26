@@ -6,6 +6,8 @@
 const CACHE_NAME = 'thrustworthy-gemini-tts-v1';
 const VOICE_NAME = 'Kore';
 const STYLE_PROMPT = 'Say in a calm, clear, encouraging first-aid coach voice:';
+// Spoken answers aren't cached, so cap how long we wait for Gemini audio.
+const ANSWER_TTS_TIMEOUT_MS = 5000;
 
 // Fixed cues fetched up front. Anything not listed is fetched the first time it is spoken.
 export const PRELOAD_CUES = [
@@ -90,6 +92,8 @@ const decoded = new Map<string, AudioBuffer>();
 const pending = new Map<string, Promise<AudioBuffer | null>>();
 let audioContext: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
+// Bumped by every speak/stop so a slow answer can't talk over newer feedback.
+let speechToken = 0;
 // Set after an auth/config failure so we stop hammering the proxy.
 let geminiDisabled = false;
 
@@ -221,6 +225,21 @@ export async function preloadCues(cues: readonly string[] = PRELOAD_CUES): Promi
   }
 }
 
+function playBuffer(buffer: AudioBuffer): void {
+  const ctx = context();
+  void ctx.resume();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.onended = () => {
+    if (currentSource === source) {
+      currentSource = null;
+    }
+  };
+  source.start();
+  currentSource = source;
+}
+
 // Each new cue interrupts the previous one: during rapid back blows the
 // latest feedback is the only one that still matters.
 export function speak(text: string): void {
@@ -239,21 +258,61 @@ export function speak(text: string): void {
     return;
   }
 
+  playBuffer(buffer);
+}
+
+// One-off text (assistant answers): wait briefly for Gemini audio, else use the browser voice.
+export async function speakAnswer(text: string): Promise<void> {
+  if (!text) {
+    return;
+  }
+
+  stopSpeech();
+  const token = speechToken;
+  let audio: { data: string; mimeType: string } | null = null;
+
+  if (!geminiDisabled) {
+    try {
+      audio = await Promise.race([
+        requestGemini(text),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), ANSWER_TTS_TIMEOUT_MS)),
+      ]);
+    } catch (error) {
+      console.warn('Gemini TTS request failed; using browser voice.', error);
+    }
+  }
+
+  if (token !== speechToken) {
+    return;
+  }
+
+  if (audio) {
+    playBuffer(pcmToBuffer(audio.data, audio.mimeType));
+  } else {
+    speakWithBrowser(text);
+  }
+}
+
+export function isSpeaking(): boolean {
+  return currentSource !== null || (speechSupported() && window.speechSynthesis.speaking);
+}
+
+// Short beep acknowledging the wake word; not a word, so the mic won't transcribe it.
+export function chime(): void {
   const ctx = context();
   void ctx.resume();
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(ctx.destination);
-  source.onended = () => {
-    if (currentSource === source) {
-      currentSource = null;
-    }
-  };
-  source.start();
-  currentSource = source;
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.frequency.value = 880;
+  gain.gain.setValueAtTime(0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+  oscillator.connect(gain).connect(ctx.destination);
+  oscillator.start();
+  oscillator.stop(ctx.currentTime + 0.18);
 }
 
 export function stopSpeech(): void {
+  speechToken += 1;
   try { currentSource?.stop(); } catch {}
   currentSource = null;
 
