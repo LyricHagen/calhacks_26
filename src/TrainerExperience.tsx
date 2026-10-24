@@ -1,0 +1,493 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ADC_MAX, EMPTY, NineSensorDetector, NineSensorProtocol,
+  SENSOR_NAMES, type DetectedAction, type NineFrame, type NineReadings,
+  type SensorId,
+} from './trainerLab/sensors';
+
+type Mode = 'train' | 'calibrate' | 'test';
+type Scenario = 'severe' | 'cough' | 'unresponsive';
+type View = 'front' | 'back';
+type Tone = 'neutral' | 'success' | 'warning';
+type Connection = 'demo' | 'connecting' | 'live' | 'error';
+type Feedback = { tone: Tone; heading: string; detail: string };
+type Counts = { back: number; front: number; cpr: number; correct: number; errors: number; rounds: number };
+type History = { time: string; label: string; verdict: string; good: boolean; peak: number };
+
+type SerialPort = {
+  open: (options: { baudRate: number }) => Promise<void>;
+  close: () => Promise<void>;
+  readable: ReadableStream<Uint8Array> | null;
+};
+type SerialNavigator = Navigator & { serial?: { requestPort: () => Promise<SerialPort> } };
+
+const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 0, rounds: 0 };
+const SENSOR_GROUPS = [
+  { name: 'ABDOMEN', ids: [0, 1, 2, 3, 4] },
+  { name: 'BACK', ids: [5, 6] },
+  { name: 'CHEST', ids: [7, 8] },
+] as const;
+const FRONT_COORDS: { id: SensorId; x: number; y: number }[] = [
+  { id: 0, x: 184, y: 292 }, { id: 1, x: 184, y: 244 },
+  { id: 2, x: 184, y: 342 }, { id: 3, x: 144, y: 295 },
+  { id: 4, x: 224, y: 295 }, { id: 7, x: 165, y: 182 },
+  { id: 8, x: 203, y: 182 },
+];
+const BACK_COORDS: { id: SensorId; x: number; y: number }[] = [
+  { id: 5, x: 184, y: 190 }, { id: 6, x: 230, y: 255 },
+];
+const startFeedback: Feedback = {
+  tone: 'neutral', heading: 'Ready when you are',
+  detail: 'Follow the instruction, then use the mannequin or a connected sensor. We will assess contact location and sequence as you practise.',
+};
+const empty = (): NineReadings => [...EMPTY] as NineReadings;
+const prettyTime = () => new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+function Logo() {
+  return <div className="brandmark" aria-hidden="true"><svg viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="12" fill="#007E79"/><path d="M9 20h6l3-8 5 17 4-9h4" stroke="#fff" strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg></div>;
+}
+function Check({ size = 17 }: { size?: number }) { return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6"/></svg>; }
+function Refresh() { return <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 11a8 8 0 1 0-2 6"/><path d="M20 4v7h-7"/></svg>; }
+function Usb() { return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3v15m0-15-3 3m3-3 3 3M12 18 7 13m5 5 5-5M7 13v-2m10 2v-2"/><circle cx="7" cy="9" r="1"/><rect x="16" y="8" width="3" height="3"/></svg>; }
+
+function BodyDiagram({
+  view, active, target, onSensor, cpr, flash,
+}: {
+  view: View; active: SensorId | null; target: SensorId | null;
+  onSensor: (id: SensorId) => void; cpr: boolean; flash: number;
+}) {
+  const coords = view === 'front' ? FRONT_COORDS : BACK_COORDS;
+  const focusY = view === 'back' ? 190 : cpr ? 182 : 292;
+  return <div className="body-stage">
+    <svg className={`body-illustration ${active !== null ? 'impact' : ''}`} viewBox="0 0 368 420" role="img" aria-label={`Interactive ${view} view of training mannequin with force sensor locations`}>
+      <defs>
+        <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#f4cfb2"/><stop offset=".42" stopColor="#d9a787"/><stop offset="1" stopColor="#bc816a"/>
+        </linearGradient>
+        <linearGradient id="chest" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stopColor="#bc856c"/><stop offset=".22" stopColor="#f1c9aa"/><stop offset=".5" stopColor="#e7b99b"/><stop offset=".78" stopColor="#efc5a7"/><stop offset="1" stopColor="#b57d64"/>
+        </linearGradient>
+        <linearGradient id="arms" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#cb9379"/><stop offset=".5" stopColor="#e9baa0"/><stop offset="1" stopColor="#bd846f"/></linearGradient>
+        <filter id="bodyShadow"><feDropShadow dx="0" dy="12" stdDeviation="10" floodColor="#70472f" floodOpacity=".16"/></filter>
+      </defs>
+      <ellipse cx="184" cy="396" rx="115" ry="12" fill="#bcc9bd" opacity=".22"/>
+      <g filter="url(#bodyShadow)">
+        {/* Shoulders and arms */}
+        <path d="M126 109 C99 116 73 135 65 176 L45 280 Q41 304 58 310 Q74 314 83 290 L113 200 118 298 250 298 255 201 286 289 Q297 313 313 308 Q327 302 321 277 L304 176 C296 136 268 116 243 109Z" fill="url(#arms)" stroke="#a77968" strokeWidth="1.3"/>
+        {/* Neck */}
+        <path d="M157 92 157 119 Q183 137 211 119 L211 92Z" fill="url(#skin)"/>
+        {/* Head and ears */}
+        <ellipse cx="150" cy="60" rx="10" ry="16" fill="#d6a080"/><ellipse cx="217" cy="60" rx="10" ry="16" fill="#cb9579"/>
+        <path d="M148 36 Q153 11 184 11 Q215 10 223 38 L216 80 Q207 105 184 109 Q160 102 151 81Z" fill="url(#skin)" stroke="#ad806f" strokeWidth="1.2"/>
+        <path d="M150 42 Q151 10 181 9 Q219 7 221 39 Q201 23 180 23 Q159 25 150 42Z" fill="#293f3e"/>
+        {view === 'front' && <g fill="none" stroke="#9c6a5c" strokeLinecap="round">
+          <path d="M168 57q7-4 13 0M190 57q7-4 13 0" strokeWidth="1.7"/>
+          <path d="M185 59v15l-4 2" strokeWidth="1.4"/>
+          <path d="M175 87q9 5 18 0" strokeWidth="1.3"/>
+        </g>}
+        {/* torso */}
+        <path d="M126 115 C139 128 159 137 184 137 Q225 138 243 115 C260 135 270 163 265 210 Q254 257 253 292 L245 368 Q184 385 121 368 L114 293 Q109 254 102 212 C96 167 105 136 126 115Z" fill="url(#chest)" stroke="#b8856f" strokeWidth="1.3"/>
+        {view === 'front' ? <g fill="none" stroke="#a97667" strokeWidth="1.5" opacity=".56">
+          <path d="M130 147 Q155 137 184 149 Q213 137 239 147"/>
+          <path d="M114 170 Q146 158 174 172M194 172 Q222 158 254 170"/>
+          <path d="M114 187 Q147 181 173 190M194 190 Q222 181 253 187"/>
+          <path d="M117 206 Q145 202 173 208M195 208 Q225 202 251 206"/>
+          <path d="M118 229 Q149 220 174 228M194 228 Q221 220 252 229"/>
+          <path d="M184 145V218" strokeWidth="2" opacity=".55"/>
+          <path d="M183 251q3 6 0 11" strokeWidth="3"/>
+          <path d="M121 306Q183 317 247 306" opacity=".3"/>
+        </g> : <g fill="none" stroke="#a4715f" opacity=".55">
+          <path d="M181 140 Q184 211 183 323" strokeWidth="2.4"/>
+          <path d="M178 146 Q144 139 127 156 Q116 181 132 204 Q154 218 175 199" strokeWidth="2"/>
+          <path d="M190 146 Q224 139 240 156 Q251 181 235 204 Q213 218 192 199" strokeWidth="2"/>
+          <path d="M128 250 Q154 263 178 249M189 249Q215 263 241 250" strokeWidth="1.4"/>
+          <path d="M181 224v70" strokeDasharray="3 7" strokeWidth="1.5"/>
+        </g>}
+        {/* Clothing edge for training context */}
+        <path d="M121 364 Q182 380 246 364 L248 381 Q186 394 119 381Z" fill="#718780" opacity=".65"/>
+      </g>
+      {/* Training zones */}
+      {coords.map(({ id, x, y }) => {
+        const isTarget = id === target || (cpr && (id === 7 || id === 8));
+        const isActive = id === active;
+        return <g key={id} className="svg-pad" onClick={() => onSensor(id)}>
+          <title>{SENSOR_NAMES[id]} — click to simulate contact</title>
+          {isTarget && <circle cx={x} cy={y} r="29" fill="none" stroke="#04877b" strokeDasharray="5 7" strokeWidth="2.5" className="target-orbit"/>}
+          <circle cx={x} cy={y} r={isActive ? 24 : isTarget ? 20 : 14} className={`body-pad ${isActive ? 'is-active' : ''} ${isTarget ? 'is-target' : ''}`} />
+          <circle cx={x} cy={y} r="6" fill={isActive || isTarget ? '#fff' : '#c2b0a2'} opacity=".9"/>
+        </g>;
+      })}
+      {target !== null && coords.some(c => c.id === target) && <g className="target-label">
+        <rect x="252" y={focusY - 22} width="104" height="34" rx="16" fill="#e5f7ef" stroke="#a1dbc7"/>
+        <text x="304" y={focusY - 1} fill="#08786b" fontWeight="700" fontSize="12" textAnchor="middle">TARGET AREA</text>
+        <path d={`M252 ${focusY - 5} H233`} stroke="#08786b" strokeWidth="1.5" strokeDasharray="3 4" />
+      </g>}
+      {active !== null && <circle key={flash} cx={(coords.find(c => c.id === active)?.x ?? 184)} cy={(coords.find(c => c.id === active)?.y ?? focusY)} r="39" className="contact-ripple" fill="none" stroke="#0eab93" strokeWidth="3"/>}
+    </svg>
+    <span className="anatomy-credit">Illustrative anatomy · sensor positions schematic</span>
+  </div>;
+}
+
+function Airway({ scenario }: { scenario: Scenario }) {
+  return <div className="airway-mini" aria-label={scenario === 'cough' ? 'Airflow illustrated through a patent airway' : 'Illustrated airway narrowing with obstruction'} role="img">
+    <svg viewBox="0 0 210 128" aria-hidden="true">
+      <defs><linearGradient id="headShading" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#f2d0b5"/><stop offset="1" stopColor="#d3a18a"/></linearGradient></defs>
+      <path d="M66 10 C30 12 23 43 32 62 L25 76 Q40 84 54 83 L62 117H122V61 Q120 17 75 10Z" fill="url(#headShading)" stroke="#c4957b" strokeWidth="1.4"/>
+      <path d="M29 68L70 68 Q86 69 89 92V119" stroke="#c77e79" strokeWidth="16" fill="none" strokeLinecap="round"/>
+      <path d="M29 68L70 68 Q86 69 89 92V119" stroke="#64363b" strokeWidth="7" fill="none" strokeLinecap="round"/>
+      {scenario === 'cough' ? <path d="M33 68L72 68Q89 70 89 94V115" className="air-stream"/> : <><circle cx="87" cy="90" r="10" fill="#db8853" stroke="#b76539" strokeWidth="1.6"/><path d="M114 90h40" stroke="#b76539" strokeWidth="1.6" strokeDasharray="3 4"/><text x="158" y="94" textAnchor="middle" fontSize="10" fill="#9c5636">blocked</text></>}
+      <text x="150" y="29" textAnchor="middle" fontSize="10" fontWeight="700" fill="#42685d">AIRWAY</text>
+      <text x="150" y="44" textAnchor="middle" fontSize="10" fill="#71867d">illustration</text>
+    </svg>
+  </div>;
+}
+
+function SensorMeter({ value, baseline, threshold }: { value: number; baseline: number; threshold: number }) {
+  const corrected = Math.max(0, value - baseline);
+  return <div className="meter" title={`${value} raw ADC, ${corrected} above baseline`}>
+    <span style={{ width: `${Math.min(100, corrected / ADC_MAX * 100)}%` }} className={corrected >= threshold ? 'meter-fill active' : 'meter-fill'}/>
+    <span className="meter-line" style={{ left: `${threshold / ADC_MAX * 100}%` }}/>
+  </div>;
+}
+
+export function TrainerExperience() {
+  const [mode, setMode] = useState<Mode>('train');
+  const [scenario, setScenario] = useState<Scenario>('severe');
+  const [counts, setCounts] = useState<Counts>({ ...INITIAL_COUNTS });
+  const [readings, setReadings] = useState<NineReadings>(empty);
+  const [peaks, setPeaks] = useState<NineReadings>(empty);
+  const [baseline, setBaseline] = useState<NineReadings>(empty);
+  const [threshold, setThreshold] = useState(650);
+  const [history, setHistory] = useState<History[]>([]);
+  const [feedback, setFeedback] = useState<Feedback>(startFeedback);
+  const [connection, setConnection] = useState<Connection>('demo');
+  const [connectionDetail, setConnectionDetail] = useState('');
+  const [viewOverride, setViewOverride] = useState<View | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const [flash, setFlash] = useState(0);
+  const [calibrated, setCalibrated] = useState(false);
+  const [testTouched, setTestTouched] = useState<SensorId[]>([]);
+  const [framesReceived, setFramesReceived] = useState(0);
+  const [simBusy, setSimBusy] = useState(false);
+
+  const detector = useRef(new NineSensorDetector());
+  const protocol = useRef(new NineSensorProtocol());
+  const serialPort = useRef<SerialPort | null>(null);
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const readingWindow = useRef<NineReadings[]>([]);
+  const latestValues = useRef<NineReadings>(empty());
+  const scenarioRef = useRef(scenario);
+  const modeRef = useRef(mode);
+  const countsRef = useRef(counts);
+  const baselineRef = useRef(baseline);
+  const thresholdRef = useRef(threshold);
+  const processFrameRef = useRef<(f: NineFrame) => void>(() => {});
+  const simBusyRef = useRef(false);
+  const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+
+  scenarioRef.current = scenario;
+  modeRef.current = mode;
+  countsRef.current = counts;
+  baselineRef.current = baseline;
+  thresholdRef.current = threshold;
+  const phase = scenario === 'severe' ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review') : scenario === 'unresponsive' ? 'cpr' : 'cough';
+  const recommended: SensorId | null = phase === 'back' ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 7 : null;
+  const defaultView: View = phase === 'back' ? 'back' : 'front';
+  const view = viewOverride ?? defaultView;
+  const active = readings.reduce<{ value: number; id: SensorId | null }>((top, value, i) => {
+    const delta = Math.max(0, value - baseline[i]);
+    return delta > top.value && delta >= threshold ? { value: delta, id: i as SensorId } : top;
+  }, { value: 0, id: null }).id;
+  const liveSensor = active !== null ? SENSOR_NAMES[active] : 'No pressure detected';
+
+  function evaluate(event: DetectedAction) {
+    const sc = scenarioRef.current;
+    const curr = { ...countsRef.current };
+    let result: Feedback;
+    let good = false;
+    if (sc === 'cough') {
+      result = { tone: 'warning', heading: 'No intervention needed yet', detail: 'A strong, effective cough should be encouraged and monitored. Only intervene if the obstruction becomes severe.' };
+    } else if (sc === 'unresponsive') {
+      good = event.type === 'cpr' && event.bothCpr;
+      if (good) {
+        curr.cpr += 1;
+        result = { tone: 'success', heading: 'Chest-pad contact detected', detail: 'Both chest sensors activated together. Continue practising the CPR sequence; sensor contact alone does not validate compression depth or rate.' };
+      } else {
+        result = { tone: 'warning', heading: 'Adjust your hand placement', detail: event.type === 'cpr' ? 'Both chest pads should register during this practice. Centre your hands on the illustrated chest target.' : 'This scenario is practising CPR. Move from the abdomen or back to the centre of the chest.' };
+      }
+    } else {
+      const expected = curr.back < 5 ? 'back' : curr.front < 5 ? 'front' : 'review';
+      const isTarget = expected === 'back' ? event.sensor === 5 : expected === 'front' ? event.sensor === 0 : false;
+      if (expected === 'review') {
+        result = { tone: 'neutral', heading: 'Practice round complete', detail: 'You completed five back contacts and five abdominal contacts. If the person is still responsive and obstructed, another round is needed; this simulator cannot tell whether the object was removed.' };
+      } else if (isTarget) {
+        good = true;
+        if (expected === 'back') curr.back += 1;
+        else curr.front += 1;
+        const n = expected === 'back' ? curr.back : curr.front;
+        const ending = n === 5;
+        result = { tone: 'success', heading: ending ? 'Set complete — well placed' : 'Good location — contact recorded',
+          detail: ending && expected === 'back' ? 'Five target back contacts recorded. Now practise abdominal thrust placement on the front view.' : ending ? 'You have completed this simulated round. Continue if the person remains responsive and obstructed.' : `${n} of 5 ${expected === 'back' ? 'back blows' : 'abdominal thrusts'} recorded at the target sensor. Keep following the highlighted target.` };
+      } else {
+        const location = SENSOR_NAMES[event.sensor].toLowerCase();
+        result = { tone: 'warning', heading: event.type === expected ? 'Placement needs adjustment' : 'Try the current step first',
+          detail: expected === 'back' ? `Contact detected at ${location}. In this phase, practise a back blow between the shoulder blades (highlighted in teal).` : `Contact detected at ${location}. In this phase, target the upper abdomen above the navel and below the breastbone (highlighted in teal).` };
+      }
+    }
+    if (good) curr.correct += 1;
+    else curr.errors += 1;
+    countsRef.current = curr;
+    setCounts(curr);
+    setFeedback(result);
+    const item: History = { time: prettyTime(), label: SENSOR_NAMES[event.sensor], verdict: result.heading, good, peak: event.peak };
+    setHistory(prev => [item, ...prev].slice(0, 12));
+    setFlash(v => v + 1);
+  }
+
+  const processFrame = useCallback((frame: NineFrame) => {
+    if (!mounted.current) return;
+    const vals = frame.readings;
+    latestValues.current = vals;
+    setReadings(vals);
+    setPeaks(frame.peaks);
+    setFramesReceived(p => p + 1);
+    readingWindow.current.push(vals);
+    if (readingWindow.current.length > 75) readingWindow.current.shift();
+    if (modeRef.current === 'train') {
+      const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks);
+      for (const event of events) evaluate(event);
+    }
+    // Identify any pad that has been triggered in sensor-test mode, independent of a completed contact.
+    const touched = vals.map((value, i) => ({ value: Math.max(value, frame.peaks[i]) - baselineRef.current[i], id: i as SensorId })).filter(x => x.value >= thresholdRef.current).map(x => x.id);
+    if (touched.length) setTestTouched(prev => Array.from(new Set([...prev, ...touched])) as SensorId[]);
+  }, []);
+  processFrameRef.current = processFrame;
+
+  function resetSession(next: Scenario = scenario) {
+    if (simTimer.current) clearTimeout(simTimer.current);
+    simBusyRef.current = false; setSimBusy(false);
+    detector.current.reset();
+    countsRef.current = { ...INITIAL_COUNTS };
+    setCounts({ ...INITIAL_COUNTS });
+    setHistory([]);
+    setReadings(empty());
+    setPeaks(empty());
+    latestValues.current = empty();
+    setScenario(next);
+    scenarioRef.current = next;
+    setViewOverride(null);
+    setFeedback(next === 'cough' ? { tone: 'neutral', heading: 'A strong cough is a good sign', detail: 'Encourage the person to keep coughing. Watch for a change to weak or absent cough, inability to speak, or worsening responsiveness.' } : next === 'unresponsive' ? { tone: 'neutral', heading: 'Begin CPR practice', detail: 'Activate emergency response, start CPR with compressions and follow a certified adult BLS protocol. Only remove a visible object; never perform a blind finger sweep.' } : startFeedback);
+  }
+
+  function simulate(ids: SensorId[]) {
+    if (connection === 'live' || simBusyRef.current) return;
+    simBusyRef.current = true; setSimBusy(true);
+    const pressed = empty();
+    ids.forEach(id => { pressed[id] = Math.min(ADC_MAX, baselineRef.current[id] + Math.max(1700, thresholdRef.current + 750)); });
+    processFrameRef.current({ readings: pressed, peaks: pressed, deviceTimeMs: null });
+    simTimer.current = setTimeout(() => {
+      const resting = [...baselineRef.current] as NineReadings;
+      processFrameRef.current({ readings: resting, peaks: resting, deviceTimeMs: null });
+      simBusyRef.current = false;
+      setSimBusy(false);
+      simTimer.current = null;
+    }, 240);
+  }
+
+  async function connect() {
+    const serial = (navigator as SerialNavigator).serial;
+    if (!serial) {
+      setConnection('error'); setConnectionDetail('Web Serial requires Chrome or Edge on desktop, with HTTPS or localhost. Use Demo without a board.'); return;
+    }
+    if (connection === 'live' || connection === 'connecting') return;
+    setConnection('connecting'); setConnectionDetail('Choose the ESP32-S3 USB serial device.');
+    try {
+      const port = await serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      serialPort.current = port;
+      protocol.current = new NineSensorProtocol();
+      setConnection('live'); setConnectionDetail('Connected. Waiting for fsr9-v1 frames.');
+      const reader = port.readable?.getReader();
+      if (!reader) throw new Error('Serial port opened without a readable stream.');
+      readerRef.current = reader;
+      const decoder = new TextDecoder();
+      let lineBuffer = '';
+      try {
+        while (mounted.current) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          lineBuffer += decoder.decode(value, { stream: true });
+          const lines = lineBuffer.split(/\r?\n/);
+          lineBuffer = lines.pop() ?? '';
+          if (lineBuffer.length > 4096) lineBuffer = '';
+          for (const line of lines) {
+            const message = protocol.current.parseLine(line);
+            if (message?.kind === 'frame') {
+              processFrameRef.current(message.frame);
+              setConnectionDetail('Receiving nine-sensor data over USB.');
+            }
+            if (message?.kind === 'hello') setConnectionDetail('ChokeSense-9FSR identified · 50 Hz frames.');
+          }
+        }
+      } finally {
+        try { reader.releaseLock(); } catch { /* already released */ }
+        if (readerRef.current === reader) readerRef.current = null;
+        try { await port.close(); } catch { /* cable may have been unplugged */ }
+        if (serialPort.current === port) serialPort.current = null;
+        if (mounted.current) setConnection('demo');
+      }
+    } catch (err) {
+      if (!mounted.current) return;
+      setConnection(serialPort.current ? 'live' : 'error');
+      setConnectionDetail(err instanceof Error ? err.message : 'Could not connect to ESP32.');
+    }
+  }
+
+  async function disconnect() {
+    try { await readerRef.current?.cancel(); } catch { /* reader may already be closed */ }
+    setConnection('demo');
+    setConnectionDetail('Disconnected. Demo mode is available.');
+  }
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (simTimer.current) clearTimeout(simTimer.current);
+      void readerRef.current?.cancel().catch(() => {});
+    };
+  }, []);
+
+  function calibrateRest() {
+    const samples = readingWindow.current.slice(-50);
+    const reference = samples.length ? samples : [latestValues.current];
+    const newBaseline = empty();
+    for (let i = 0; i < 9; i++) newBaseline[i] = Math.round([...reference.map(row => row[i])].sort((a, b) => a - b).slice(0, Math.max(1, Math.ceil(reference.length / 2))).reduce((sum, n) => sum + n, 0) / Math.max(1, Math.ceil(reference.length / 2)));
+    baselineRef.current = newBaseline;
+    setBaseline(newBaseline);
+    detector.current.reset();
+    setCalibrated(true);
+    setFeedback({ tone: 'success', heading: 'Resting baseline captured', detail: 'Nine-channel baseline saved for this session. Validate each sensor individually in Sensor Test and adjust sensitivity as necessary.' });
+  }
+
+  function nextRound() {
+    const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
+    countsRef.current = next; setCounts(next);
+    detector.current.reset(); setViewOverride(null);
+    setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
+  }
+
+  function downloadSummary() {
+    const data = {
+      product: 'ChokeSense', exportedAt: new Date().toISOString(),
+      scenario, connection, counts, thresholdADCAboveBaseline: threshold,
+      baseline, events: history,
+      note: 'Training demonstration. FSR signals do not measure clinical force, CPR depth, or obstruction clearance.',
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'chokesense-session.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  let instruction = '', description = '', guide = '', promptTag = '';
+  if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; description = 'Support the person leaning forward. Aim between the shoulder blades with the heel of your hand.'; guide = 'Target: between the shoulder blades'; }
+  if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; description = 'Position your fist above the navel and below the breastbone. Practise the inward-and-upward motion on the training mannequin.'; guide = 'Target: upper abdomen, above the navel'; }
+  if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; description = 'The five-and-five practice round is complete. If obstruction persists and the person remains responsive, repeat the cycle.'; guide = 'Practice round recorded — not airway clearance'; }
+  if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; description = 'An effective cough can clear a mild obstruction. Monitor closely for worsening signs; do not deliver back blows or abdominal thrusts while coughing remains effective.'; guide = 'No sensor contact needed in this scenario'; }
+  if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; description = 'Activate emergency response and begin CPR with chest compressions. Practise centred hand placement using both chest pads.'; guide = 'Target: centre of chest'; }
+
+  const activeWrong = active !== null && (scenario === 'cough' || (phase === 'back' && active !== 5) || (phase === 'front' && active !== 0) || (phase === 'cpr' && active !== 7 && active !== 8));
+  const activeHint = active !== null ? (scenario === 'cough' ? 'Pause — this person can still cough effectively' : activeWrong ? `Try the highlighted target instead of ${SENSOR_NAMES[active].toLowerCase()}` : 'Target contact detected — release to record') : null;
+
+  return <div className="site-shell">
+    <header className="topbar">
+      <div className="brand"><Logo/><div><strong>ChokeSense</strong><span>Hands-on first-aid learning</span></div></div>
+      <div className="top-actions">
+        <span className={`connection-pill ${connection}`}><i/>{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
+        <button type="button" className="connect-button" onClick={connection === 'live' ? () => { void disconnect(); } : () => { void connect(); }} disabled={connection === 'connecting'}><Usb/>{connection === 'live' ? 'Disconnect' : 'Connect sensor'}</button>
+      </div>
+    </header>
+
+    <main className="container">
+      <div className="page-intro">
+        <div><div className="eyebrow"><span className="eyebrow-dot"/> INTERACTIVE TRAINING STATION</div><h1>Learn by doing. <span>Improve as you go.</span></h1><p>Follow one clear instruction, practise on the mannequin, and receive instant placement feedback.</p></div>
+        <div className="intro-note"><span>✳</span><div><strong>Powered by 9 pressure sensors</strong><small>5 abdomen · 2 back · 2 chest</small></div></div>
+      </div>
+
+      <div className="modebar" aria-label="Trainer modes">
+        <div className="mode-tabs" role="tablist" aria-label="Training tools">
+          <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('train'); }}>Guided training</button>
+          <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('calibrate'); }}>Calibrate</button>
+          <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setMode('test'); }}>Sensor test</button>
+        </div>
+        <span className="mode-status">{connection === 'live' ? 'LIVE INPUT' : 'SIMULATION MODE'}</span>
+      </div>
+
+      {connection === 'error' && <div className="connection-error" role="alert">{connectionDetail}</div>}
+
+      {mode === 'train' && <>
+        <div className="scenario-bar">
+          <span className="field-label">SCENARIO</span>
+          <div className="scenario-buttons">
+            <button type="button" className={scenario === 'severe' ? 'selected' : ''} onClick={() => resetSession('severe')}>Severe choking</button>
+            <button type="button" className={scenario === 'cough' ? 'selected' : ''} onClick={() => resetSession('cough')}>Effective cough</button>
+            <button type="button" className={scenario === 'unresponsive' ? 'selected' : ''} onClick={() => resetSession('unresponsive')}>Unresponsive / CPR</button>
+          </div>
+          <button type="button" className="quiet-button reset" onClick={() => resetSession()}><Refresh/> Reset</button>
+        </div>
+
+        <section className="practice-grid">
+          <article className="instruction-panel">
+            <div className="instruction-top"><span className="instruction-step">YOUR NEXT ACTION</span><span className="round-label">{scenario === 'severe' ? `ROUND ${counts.rounds + 1}` : 'PRACTICE'}</span></div>
+            <span className="step-tag"><span className="step-tag-dot"/>{promptTag}</span>
+            <h2>{instruction}</h2>
+            <p className="step-desc">{description}</p>
+            <div className="guide-callout"><span className="target-symbol">⌖</span><div><span>WHERE TO AIM</span><strong>{guide}</strong></div></div>
+            {scenario === 'severe' && <div className="sequence-panel"><div className="sequence-label">YOUR PROGRESS</div><div className="sequence-item"><span>Back blows</span><span>{counts.back}/5</span></div><div className="progress-track"><span style={{width:`${counts.back*20}%`}}/></div><div className="sequence-item"><span>Abdominal thrusts</span><span>{counts.front}/5</span></div><div className="progress-track"><span style={{width:`${counts.front*20}%`}}/></div></div>}
+            {scenario === 'unresponsive' && <div className="sequence-panel"><div className="sequence-item"><span>Dual-pad contacts</span><strong>{counts.cpr}</strong></div><p className="tiny-note">We track placement contact, not compression depth or quality.</p></div>}
+            {phase === 'review' && <button type="button" className="button-primary fill" onClick={nextRound}>Start another practice round →</button>}
+            {scenario === 'cough' && <button type="button" className="button-primary fill" onClick={() => resetSession('severe')}>Cough becomes ineffective →</button>}
+          </article>
+
+          <article className="visual-panel">
+            <div className="visual-head"><div><div className="small-label">MANNEQUIN</div><strong>Practice placement</strong></div><div className="view-switch"><button type="button" className={view === 'back' ? 'on' : ''} onClick={() => setViewOverride('back')}>Back</button><button type="button" className={view === 'front' ? 'on' : ''} onClick={() => setViewOverride('front')}>Front</button></div></div>
+            <BodyDiagram view={view} active={active} target={recommended} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash}/>
+            <div className="mannequin-guide"><span className="legend-dot"/> Highlighted area = current target</div>
+          </article>
+
+          <article className="coach-panel">
+            <div className="coach-title"><div className="coach-badge">✦</div><div><div className="small-label">YOUR LIVE COACH</div><strong>Instant feedback</strong></div></div>
+            <div role="status" aria-live="polite" className={`feedback-box ${activeHint ? (activeWrong ? 'warning' : 'success') : feedback.tone}`}>
+              <div className="feedback-icon">{activeHint ? activeWrong ? '!' : '✓' : feedback.tone === 'success' ? '✓' : feedback.tone === 'warning' ? '!' : '◎'}</div>
+              <div><strong>{activeHint ? activeWrong ? 'Adjust your placement' : 'Contact detected' : feedback.heading}</strong><p>{activeHint ?? feedback.detail}</p></div>
+            </div>
+            <div className="live-readout"><span className="readout-label">LIVE SENSOR</span><strong>{liveSensor}</strong><div className="live-pulse"><span className={active !== null ? 'lit' : ''}/>{active === null ? 'Waiting for pressure' : `${Math.max(0, readings[active] - baseline[active])} above baseline`}</div></div>
+            <div className="coach-divider"/>
+            <div className="result-stat"><div><strong>{counts.correct}</strong><span>Target contacts</span></div><div><strong>{counts.errors}</strong><span>Needs correction</span></div></div>
+            <div className="airway-row"><Airway scenario={scenario}/><p><b>Airway concept</b><span>{scenario === 'cough' ? 'A strong cough can move air and may clear the obstruction.' : 'Illustration only. Sensor signals cannot detect airway clearance.'}</span></p></div>
+          </article>
+        </section>
+
+        <section className="action-strip">
+          <div className="action-strip-copy"><span className="action-strip-icon">◉</span><div><strong>Try it now</strong><span>{connection === 'live' ? 'Use your physical mannequin.' : 'No hardware? Simulate a sensor contact to test the feedback.'}</span></div></div>
+          <div className="action-strip-controls">
+            {connection !== 'live' && <>
+              <button type="button" className="button-primary" disabled={simBusy || recommended === null} onClick={() => recommended !== null && simulate(phase === 'cpr' ? [7,8] : [recommended])}>Simulate correct contact <span>↗</span></button>
+              <button type="button" className="button-outline" disabled={simBusy} onClick={() => simulate(phase === 'back' ? [6] : phase === 'front' ? [1] : phase === 'cpr' ? [0] : [0])}>Try incorrect contact</button>
+            </>}
+            <button type="button" className="text-button" onClick={() => setAdvanced(v => !v)} aria-expanded={advanced}>{advanced ? 'Hide' : 'Show'} raw readings <span>{advanced ? '↑' : '↓'}</span></button>
+          </div>
+        </section>
+        {advanced && <section className="raw-panel"><h3>Live sensor values <span>0–4095 ADC</span></h3><div className="raw-grid">{SENSOR_NAMES.map((name,i) => <div key={name} className="raw-item"><div><span>{name}</span><b>{readings[i]}</b></div><SensorMeter value={readings[i]} baseline={baseline[i]} threshold={threshold}/></div>)}</div></section>}
+        <section className="summary-bar"><div><span className="section-kicker">SESSION SNAPSHOT</span><strong>{history.length ? `${history.length} recent contacts` : 'Your progress will appear here'}</strong><span>{history.length ? history[0].verdict : 'Use the highlighted target to start your first practice.'}</span></div><div className="summary-controls"><button type="button" className="button-outline small" onClick={downloadSummary}>Export results ↓</button><button type="button" className="button-outline small" onClick={() => { detector.current.reset(); setMode('test'); }}>Check sensors →</button></div></section>
+      </>}
+
+      {mode === 'calibrate' && <section className="tool-layout"><div className="tool-intro"><span className="step-tag">SETUP / CALIBRATION</span><h2>Make every reading meaningful.</h2><p>FSRs can have a resting offset. Capture a baseline while all sensors are untouched, then adjust the ADC change required to register contact.</p><div className="cal-step"><span>01</span><p><strong>Release all sensors</strong><br/>Keep the mannequin completely untouched while capturing baseline.</p></div><div className="cal-step"><span>02</span><p><strong>Capture resting readings</strong><br/>Uses the latest available samples; data remains in the browser.</p></div><button type="button" className="button-primary fill" onClick={calibrateRest}><Check/> Capture resting baseline</button><div className={`cal-status ${calibrated ? 'done' : ''}`}>{calibrated ? '✓ Baseline captured — now test each sensor.' : '○ Baseline not captured this session'}</div></div><div className="tool-workspace"><div className="workspace-head"><h3>Sensitivity</h3><span>Training threshold, not a force measurement</span></div><div className="threshold-value"><strong>{threshold}</strong><span>ADC above baseline</span></div><input className="threshold-slider" type="range" min="150" max="1600" step="25" value={threshold} onChange={(e: { target: { value: string } }) => { const val = Number(e.target.value); thresholdRef.current = val; setThreshold(val); detector.current.reset(); }} aria-label="Contact threshold"/><div className="threshold-ends"><span>More sensitive</span><span>Less sensitive</span></div><div className="workspace-head compact"><h3>Resting values</h3><span>Raw ADC per sensor</span></div><div className="baseline-grid">{SENSOR_NAMES.map((name,i) => <div key={name}><span>{name}</span><strong>{baseline[i]}</strong></div>)}</div><div className="tip-line">ⓘ Repeat calibration after repositioning the hardware or changing resistor wiring. Calibrate medical technique separately with an instructor.</div></div></section>}
+
+      {mode === 'test' && <section className="tool-layout"><div className="tool-intro"><span className="step-tag">HARDWARE / DIAGNOSTICS</span><h2>Test all nine sensors in one place.</h2><p>Press each pad on the mannequin. The corresponding row should respond immediately. Use the test buttons to simulate channels without an ESP32.</p><div className="test-progress"><strong>{testTouched.length}<span>/9</span></strong><p>Sensors triggered</p><div className="progress-track"><span style={{width:`${testTouched.length / 9 * 100}%`}}/></div></div><button type="button" className="button-outline" onClick={() => setTestTouched([])}>Reset test results</button><p className="tiny-note">This checks electronic response and logical mapping. It does not validate physical force, technique or CPR compression depth.</p></div><div className="tool-workspace"><div className="workspace-head"><h3>Live sensor monitor</h3><span>Trigger a sensor to mark it tested</span></div><div className="sensor-table">{SENSOR_GROUPS.map(group => <div key={group.name}><div className="sensor-group-label">{group.name}</div>{group.ids.map(id => <div className="sensor-table-row" key={id}><span className={`sensor-tick ${testTouched.includes(id) ? 'hit' : ''}`}>{testTouched.includes(id) ? <Check size={13}/> : '·'}</span><div className="sensor-row-main"><div><strong>{SENSOR_NAMES[id]}</strong><span>{readings[id]} live · {peaks[id]} peak</span></div><SensorMeter value={readings[id]} baseline={baseline[id]} threshold={threshold}/></div><button type="button" disabled={simBusy || connection === 'live'} className="mini-test-btn" onClick={() => simulate([id])}>Test</button></div>)}</div>)}</div><div className="tip-line">{connection === 'live' ? 'Reading live ESP32 input.' : 'Demo mode: test buttons generate synthetic ADC press-and-release frames.'} {framesReceived} frames processed. {connectionDetail}</div></div></section>}
+
+      <footer className="footer"><div><span className="footer-logo">✳</span> ChokeSense <span className="footer-sep">·</span> Demo training prototype</div><p>Adult scenarios based on AHA 2025 guidance. Not medical certification, not for use during an emergency. FSRs detect contact, not clinically effective force or compression depth.</p><a href="https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support" target="_blank" rel="noreferrer">Training reference ↗</a></footer>
+    </main>
+  </div>;
+}
