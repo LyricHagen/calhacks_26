@@ -31,6 +31,8 @@ export type SpatialEstimate = {
   uncertainty: 'narrow' | 'moderate' | 'broad';
   correction: string;
   spokenCorrection: string;
+  /** True only when the centre target sensor is the strongest (after gains). */
+  centreDominant: boolean;
   cells: SpatialCell[];
   cellSize: number;
 };
@@ -60,8 +62,8 @@ const REGIONS = {
     interpolationSigma: 21,
     targetX: 184,
     targetY: 292,
-    targetRadiusX: 30,
-    targetRadiusY: 35,
+    targetRadiusX: 36,
+    targetRadiusY: 38,
   },
   back: {
     minX: 122,
@@ -72,8 +74,8 @@ const REGIONS = {
     interpolationSigma: 26,
     targetX: 184,
     targetY: 190,
-    targetRadiusX: 30,
-    targetRadiusY: 36,
+    targetRadiusX: 36,
+    targetRadiusY: 44,
   },
 };
 
@@ -82,15 +84,41 @@ const MODEL_NOISE = 0.12;
 
 export const SPATIAL_SETTINGS = {
   noiseFloorAdc: 35,
-  relativeNoiseFloor: 0.06,
-  signalExponent: 0.85,
+  // Ignore any sensor reading below this fraction of the strongest one.
+  // FSRs under a shared plate/shell pick up bleed from neighbouring hits;
+  // 0.30 drops that crosstalk so it can't drag the estimate sideways.
+  relativeNoiseFloor: 0.30,
+  // >1 lets the strongest sensor dominate the position estimate.
+  signalExponent: 1.6,
+  // Off-centre sensors are scaled down before locating the hit, so a
+  // centre hit with some side bleed still reads as centre. 1 = no bias.
+  sideSensorGain: 0.75,
+  // Bias term: pulls the estimate (and score) towards the target centre.
+  // Scaled by how strongly the centre sensor fired, so a hit that is
+  // clearly on a side sensor is not dragged back. 0 = off, 0.5 = strong.
+  centerBias: 0.3,
   frontKernelWidth: 21,
   backKernelWidth: 23,
   pairDistanceLimit: 85,
   pairMinimumResponse: 0.12,
-  borderlineScore: 35,
+  borderlineScore: 45,
   acceptanceScore: 54,
 } as const;
+
+// Per-sensor trust, applied before locating a hit (1 = normal).
+// Sensor 3 (front left-centre) sits where the rescuer's wrist lands during
+// a thrust, so it reads high even when the fist is on target. Its reading
+// is scaled down so the wrist can't drag the estimate left. If the wrist
+// lands on the other side on your mannequin, move this entry to sensor 4.
+// Sensors not listed use sideSensorGain (or 1 for each region's centre).
+export const SENSOR_GAIN: Partial<Record<SensorId, number>> = {
+  3: 0.5,
+};
+
+export function sensorGain(id: SensorId): number {
+  return SENSOR_GAIN[id] ??
+    (id === 0 || id === 5 || id === 8 ? 1 : SPATIAL_SETTINGS.sideSensorGain);
+}
 
 export function emptySpatialSamples(): SpatialSamples {
   return { front: {}, back: {} };
@@ -117,8 +145,10 @@ export function signalPattern(
   baseline: NineReadings,
   region: SpatialRegion,
 ): number[] {
+  // Each reading is scaled by sensorGain (applied here so calibration and
+  // live hits match).
   return SPATIAL_REFERENCES[region].map(({ id }) =>
-    Math.max(0, values[id] - baseline[id]),
+    Math.max(0, values[id] - baseline[id]) * sensorGain(id),
   );
 }
 
@@ -246,7 +276,7 @@ function placementCorrection(
   const horizontal = x - config.targetX;
   const vertical = y - config.targetY;
 
-  if (Math.abs(horizontal) <= 13 && Math.abs(vertical) <= 14) {
+  if (Math.abs(horizontal) <= 20 && Math.abs(vertical) <= 18) {
     return {
       text: 'Estimated near the target area. Keep aiming at the highlighted region.',
       spoken: 'Almost there.',
@@ -255,7 +285,11 @@ function placementCorrection(
 
   // Spoken cues say "centre" rather than left/right: the rescuer stands
   // behind the mannequin for thrusts, so screen left/right would be mirrored.
-  if (Math.abs(horizontal) >= (region === 'back' ? 22 : 17)) {
+  // Correct along whichever axis is further off (relative to the target
+  // size), so a small vertical wobble never produces "too low".
+  const offX = Math.abs(horizontal) / config.targetRadiusX;
+  const offY = Math.abs(vertical) / config.targetRadiusY;
+  if (offX >= offY) {
     return horizontal < 0
       ? {
           text: 'Contact appears left of target. Move towards the centre (right in this view).',
@@ -298,6 +332,21 @@ export function estimatePlacement(
 ): SpatialEstimate | null {
   const observed = signalPattern(values, baseline, region);
   const maximum = Math.max(...observed);
+  // Verdict gate: a contact can only count as good if the centre target
+  // sensor (index 0) is the strongest reading after gains. Gains only
+  // change how much each sensor pulls the estimate; they never let a
+  // side sensor produce a "good" verdict.
+  const centreDominant =
+    observed.every((value, index) => index === 0 || value < observed[0]);
+  // The sensor that "won": the centre if it is strictly strongest,
+  // otherwise the strongest side sensor (a tie goes to the side).
+  const dominantIndex = centreDominant
+    ? 0
+    : observed.reduce(
+      (best, value, index) =>
+        index !== 0 && value > observed[best] ? index : best,
+      1,
+    );
 
   if (maximum < 1) {
     return null;
@@ -488,12 +537,28 @@ export function estimatePlacement(
   const sensorWeight = 0.38;
   const fusedWeight = 1 - modelWeight - referenceWeight - overlapWeight - sensorWeight;
 
+  const centerPriorDensity = normalisedField(candidates.map(candidate =>
+    // Width is half the target zone, so ~86% of the bias sits inside it.
+    Math.exp(-2 * (
+      ((candidate.x - config.targetX) / config.targetRadiusX) ** 2 +
+      ((candidate.y - config.targetY) / config.targetRadiusY) ** 2
+    )),
+  ));
+  // responses[0] is the centre sensor's strength relative to the strongest (0–1).
+  // No pull towards the centre unless the centre sensor actually won.
+  const centerWeight = centreDominant
+    ? SPATIAL_SETTINGS.centerBias * responses[0]
+    : 0;
+
   const weights = candidates.map((_, index) =>
-    sensorWeight * sensorDensity[index] +
-    fusedWeight * fusedDensity[index] +
-    overlapWeight * overlapDensity[index] +
-    modelWeight * fittedDensity[index] +
-    referenceWeight * referenceDensity[index],
+    (1 - centerWeight) * (
+      sensorWeight * sensorDensity[index] +
+      fusedWeight * fusedDensity[index] +
+      overlapWeight * overlapDensity[index] +
+      modelWeight * fittedDensity[index] +
+      referenceWeight * referenceDensity[index]
+    ) +
+    centerWeight * centerPriorDensity[index],
   );
 
   let mass = 0;
@@ -527,20 +592,30 @@ export function estimatePlacement(
     x: weightedX / mass,
     y: weightedY / mass,
   };
-  const score = Math.max(0, Math.min(100, 100 * targetMass / mass));
+  const rawScore = Math.max(0, Math.min(100, 100 * targetMass / mass));
+  // If a side sensor won, cap the score below the uncertain band so the
+  // contact is always reported as needing correction.
+  const score = centreDominant
+    ? rawScore
+    : Math.min(rawScore, SPATIAL_SETTINGS.borderlineScore - 1);
   const targetResponse = responses[0];
   const inconsistentCentre = effectiveSensors >= 1.7 &&
     targetResponse < 0.15 &&
     Math.abs(estimate.x - config.targetX) < config.targetRadiusX &&
     Math.abs(estimate.y - config.targetY) < config.targetRadiusY;
 
-  const uncertainty: SpatialEstimate['uncertainty'] =
+  const uncertainty: SpatialEstimate['uncertainty'] = centreDominant && (
     inconsistentCentre || (score >= SPATIAL_SETTINGS.borderlineScore &&
-      score < SPATIAL_SETTINGS.acceptanceScore)
+      score < SPATIAL_SETTINGS.acceptanceScore))
       ? 'broad'
       : 'moderate';
 
-  const correction = placementCorrection(region, estimate.x, estimate.y, uncertainty);
+  // When a side sensor won, steer the correction from that sensor's
+  // position so the advice matches the verdict.
+  const dominant = references[dominantIndex];
+  const correction = centreDominant
+    ? placementCorrection(region, estimate.x, estimate.y, uncertainty)
+    : placementCorrection(region, dominant.x, dominant.y, uncertainty);
 
   return {
     region,
@@ -550,6 +625,7 @@ export function estimatePlacement(
     uncertainty,
     correction: correction.text,
     spokenCorrection: correction.spoken,
+    centreDominant,
     cellSize: CELL_SIZE,
     cells: candidates.map((candidate, index) => ({
       x: candidate.x,
