@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ADC_MAX, EMPTY, NineSensorDetector, NineSensorProtocol,
-  SENSOR_NAMES, type DetectedAction, type NineFrame, type NineReadings,
+  SENSOR_NAMES, type ActionType, type DetectedAction, type NineFrame, type NineReadings,
   type SensorId,
 } from './trainerLab/sensors';
 
@@ -22,6 +22,10 @@ type SerialPort = {
 type SerialNavigator = Navigator & { serial?: { requestPort: () => Promise<SerialPort> } };
 
 const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 0, rounds: 0 };
+// Start-to-start pacing window for back blows or abdominal thrusts. Training pace, not an AHA figure.
+const MIN_INTERVAL_MS = 1000;
+const MAX_INTERVAL_MS = 3000;
+const noLastStart = (): Record<ActionType, number> => ({ back: -Infinity, front: -Infinity, cpr: -Infinity });
 const SENSOR_GROUPS = [
   { name: 'ABDOMEN', ids: [0, 1, 2, 3, 4] },
   { name: 'BACK', ids: [5, 6, 7] },
@@ -213,6 +217,7 @@ export function TrainerExperience() {
   const simBusyRef = useRef(false);
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStart = useRef(noLastStart());
   const mounted = useRef(true);
 
   scenarioRef.current = scenario;
@@ -260,8 +265,19 @@ export function TrainerExperience() {
     } else {
       const expected = curr.back < 5 ? 'back' : curr.front < 5 ? 'front' : 'review';
       const isTarget = expected === 'back' ? event.sensor === 5 : expected === 'front' ? event.sensor === 0 : false;
+      const start = event.time - event.durationMs;
+      const sinceLast = start - lastStart.current[event.type];
+      lastStart.current[event.type] = start;
+      const tooFast = event.type === expected && sinceLast < MIN_INTERVAL_MS;
+      // The first hit of a set has no previous start (sinceLast is Infinity), so it is never slow.
+      const tooSlow = event.type === expected && Number.isFinite(sinceLast) && sinceLast > MAX_INTERVAL_MS;
       if (expected === 'review') {
         result = { tone: 'neutral', heading: 'Practice round complete', detail: 'You completed five back contacts and five abdominal contacts. If the person is still responsive and obstructed, another round is needed; this simulator cannot tell whether the object was removed.' };
+      } else if (tooFast) {
+        result = {
+          tone: 'warning', heading: 'Too fast — not counted',
+          detail: `That ${expected === 'back' ? 'back blow' : 'thrust'} came ${(sinceLast / 1000).toFixed(1)} s after the last one. Make each one separate and deliberate: pause, reset your position, then go again.`,
+        };
       } else if (isTarget) {
         good = true;
         if (expected === 'back') curr.back += 1;
@@ -272,6 +288,12 @@ export function TrainerExperience() {
           tone: 'success', heading: ending ? 'Set complete — well placed' : 'Good location — contact recorded',
           detail: ending && expected === 'back' ? 'Five target back contacts recorded. Now practise abdominal thrust placement on the front view.' : ending ? 'You have completed this simulated round. Continue if the person remains responsive and obstructed.' : `${n} of 5 ${expected === 'back' ? 'back blows' : 'abdominal thrusts'} recorded at the target sensor. Keep following the highlighted target.`
         };
+        if (tooSlow) {
+          result = {
+            tone: 'warning', heading: 'Counted — but keep the pace up',
+            detail: `Good placement, but ${(sinceLast / 1000).toFixed(1)} s passed since the last one. In a real emergency, keep going without long pauses. ${result.detail}`,
+          };
+        }
       } else {
         if (event.type !== expected) {
           result = {
@@ -337,6 +359,7 @@ export function TrainerExperience() {
     if (simTimer.current) clearTimeout(simTimer.current);
     simBusyRef.current = false; setSimBusy(false);
     detector.current.reset();
+    lastStart.current = noLastStart();
     countsRef.current = { ...INITIAL_COUNTS };
     setCounts({ ...INITIAL_COUNTS });
     setHistory([]);
@@ -453,7 +476,7 @@ export function TrainerExperience() {
   function nextRound() {
     const next = { ...countsRef.current, back: 0, front: 0, rounds: countsRef.current.rounds + 1 };
     countsRef.current = next; setCounts(next);
-    detector.current.reset(); setViewOverride(null);
+    detector.current.reset(); lastStart.current = noLastStart(); setViewOverride(null);
     setFeedback({ tone: 'neutral', heading: 'Next round ready', detail: 'Resume with back blows if the person remains responsive and the airway remains obstructed. The simulator cannot verify clinical effectiveness.' });
   }
 
@@ -470,8 +493,8 @@ export function TrainerExperience() {
   }
 
   let instruction = '', description = '', guide = '', promptTag = '';
-  if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; description = 'Support the person leaning forward. Aim between the shoulder blades with the heel of your hand.'; guide = 'Target: between the shoulder blades'; }
-  if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; description = 'Position your fist above the navel and below the breastbone. Practise the inward-and-upward motion on the training mannequin.'; guide = 'Target: upper abdomen, above the navel'; }
+  if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; description = 'Support the person leaning forward. Aim between the shoulder blades with the heel of your hand. Pause about a second between blows.'; guide = 'Target: between the shoulder blades'; }
+  if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; description = 'Position your fist above the navel and below the breastbone. Practise the inward-and-upward motion on the training mannequin, pausing about a second between thrusts.'; guide = 'Target: upper abdomen, above the navel'; }
   if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; description = 'The five-and-five practice round is complete. If obstruction persists and the person remains responsive, repeat the cycle.'; guide = 'Practice round recorded — not airway clearance'; }
   if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; description = 'An effective cough can clear a mild obstruction. Monitor closely for worsening signs; do not deliver back blows or abdominal thrusts while coughing remains effective.'; guide = 'No sensor contact needed in this scenario'; }
   if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; description = 'Activate emergency response and practise central chest hand placement on the single sternum sensor. Contact alone does not validate CPR quality.'; guide = 'Target: centre of chest over the sternum'; }
