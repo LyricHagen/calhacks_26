@@ -6,10 +6,11 @@ import type { NineReadings } from '../trainerLab/sensors';
 
 export type AssessmentRegion = 'back' | 'front';
 export type ContactRegion = AssessmentRegion | 'cpr';
+export type AssessmentMode = 'choking' | 'cpr';
 export type Verdict = 'perfect' | 'good' | 'okay' | 'wrong-area' | 'wrong-duration' | 'miss';
 export type AssessmentNote = {
   id: number;
-  region: AssessmentRegion;
+  region: ContactRegion;
   atMs: number;
   targetDurationMs: number;
   verdict?: Verdict;
@@ -58,7 +59,42 @@ export const ASSESSMENT_SETTINGS = {
   switchBannerLeadMs: 1300,
 } as const;
 
-export function newAssessment(): AssessmentState {
+// CPR chart: one chest lane at 110 a minute. Notes are 545 ms apart, so the
+// hit window is narrower than the choking game's to keep neighbours distinct.
+export const CPR_ASSESSMENT_SETTINGS = {
+  compressions: 30,
+  noteGapMs: 545,
+  targetMs: 250,
+  minMs: 80,
+  maxMs: 450,
+  hitWindowMs: 200,
+  perfectMs: 60,
+  goodMs: 120,
+} as const;
+
+export function windowsFor(region: ContactRegion) {
+  if (region === 'cpr') return CPR_ASSESSMENT_SETTINGS;
+  const { hitWindowMs, perfectMs, goodMs } = ASSESSMENT_SETTINGS;
+  return region === 'back'
+    ? { hitWindowMs, perfectMs, goodMs, minMs: ASSESSMENT_SETTINGS.backMinMs, maxMs: ASSESSMENT_SETTINGS.backMaxMs }
+    : { hitWindowMs, perfectMs, goodMs, minMs: ASSESSMENT_SETTINGS.frontMinMs, maxMs: ASSESSMENT_SETTINGS.frontMaxMs };
+}
+
+export function noteLabel(note: AssessmentNote): string {
+  if (note.region === 'cpr') return `Compression ${note.id + 1}`;
+  return note.region === 'back' ? `Back blow ${note.id + 1}` : `Abdominal thrust ${note.id - 4}`;
+}
+
+export function newAssessment(mode: AssessmentMode = 'choking'): AssessmentState {
+  if (mode === 'cpr') {
+    const notes = Array.from({ length: CPR_ASSESSMENT_SETTINGS.compressions }, (_, id): AssessmentNote => ({
+      id,
+      region: 'cpr',
+      atMs: ASSESSMENT_SETTINGS.firstNoteMs + id * CPR_ASSESSMENT_SETTINGS.noteGapMs,
+      targetDurationMs: CPR_ASSESSMENT_SETTINGS.targetMs,
+    }));
+    return { notes, score: 0, combo: 0, maxCombo: 0, feedback: 'Ready to assess', feedbackDetail: 'Thirty chest compressions at 110 a minute.', feedbackId: 0 };
+  }
   const notes = Array.from({ length: 10 }, (_, id): AssessmentNote => ({
     id,
     region: id < 5 ? 'back' : 'front',
@@ -68,8 +104,10 @@ export function newAssessment(): AssessmentState {
   return { notes, score: 0, combo: 0, maxCombo: 0, feedback: 'Ready to assess', feedbackDetail: 'Five back blows, then five abdominal thrusts.', feedbackId: 0 };
 }
 
+/** The mannequin side to show; CPR compressions are on the front. */
 export function nextAssessmentRegion(state: AssessmentState): AssessmentRegion {
-  return state.notes.find(note => !note.verdict)?.region ?? 'front';
+  const region = state.notes.find(note => !note.verdict)?.region ?? 'front';
+  return region === 'cpr' ? 'front' : region;
 }
 
 export function assessmentAccuracy(state: AssessmentState): number {
@@ -114,32 +152,37 @@ export function judgeAssessmentContact(
   acceptanceScore: number,
 ): AssessmentState {
   const closest = state.notes
-    .filter(note => !note.verdict && Math.abs(note.atMs - contact.startedMs) <= ASSESSMENT_SETTINGS.hitWindowMs)
+    .filter(note => !note.verdict && Math.abs(note.atMs - contact.startedMs) <= windowsFor(note.region).hitWindowMs)
     .sort((a, b) => Math.abs(a.atMs - contact.startedMs) - Math.abs(b.atMs - contact.startedMs))[0];
 
   if (!closest) {
     return { ...state, combo: 0, feedback: 'OFF BEAT', feedbackDetail: 'Start the next contact when its bar reaches the line.', feedbackId: state.feedbackId + 1 };
   }
-  if (contact.region !== closest.region || !placement || placement.uncertainty === 'broad' || placement.score < acceptanceScore) {
+  // The sternum has one sensor, so a CPR contact only needs to land on it.
+  const placed = closest.region === 'cpr'
+    ? contact.region === 'cpr'
+    : contact.region === closest.region && !!placement && placement.uncertainty !== 'broad' && placement.score >= acceptanceScore;
+  if (!placed) {
     return applyVerdict(state, closest.id, 'wrong-area', 'Contact did not match the target region or placement was uncertain.', contact);
   }
-  const min = closest.region === 'back' ? ASSESSMENT_SETTINGS.backMinMs : ASSESSMENT_SETTINGS.frontMinMs;
-  const max = closest.region === 'back' ? ASSESSMENT_SETTINGS.backMaxMs : ASSESSMENT_SETTINGS.frontMaxMs;
+  const { minMs: min, maxMs: max, perfectMs, goodMs } = windowsFor(closest.region);
   if (contact.durationMs < min || contact.durationMs > max) {
     return applyVerdict(state, closest.id, 'wrong-duration', `Contact lasted ${Math.round(contact.durationMs)} ms; the game window is ${min}–${max} ms.`, contact);
   }
   const diff = Math.abs(closest.atMs - contact.startedMs);
-  const verdict: Verdict = diff <= ASSESSMENT_SETTINGS.perfectMs ? 'perfect' : diff <= ASSESSMENT_SETTINGS.goodMs ? 'good' : 'okay';
-  return applyVerdict(state, closest.id, verdict, `${Math.round(diff)} ms from the beat · ${Math.round(contact.durationMs)} ms contact · placement ${Math.round(placement.score)}/100.`, contact);
+  const verdict: Verdict = diff <= perfectMs ? 'perfect' : diff <= goodMs ? 'good' : 'okay';
+  const where = placement ? ` · placement ${Math.round(placement.score)}/100` : '';
+  return applyVerdict(state, closest.id, verdict, `${Math.round(diff)} ms from the beat · ${Math.round(contact.durationMs)} ms contact${where}.`, contact);
 }
 
 /** Don't expire the note currently being held: it is scored on release. */
 export function expireAssessmentNotes(state: AssessmentState, elapsedMs: number, heldStartMs: number | null): AssessmentState {
   let result = state;
   for (const note of state.notes) {
-    if (note.verdict || elapsedMs <= note.atMs + ASSESSMENT_SETTINGS.hitWindowMs) continue;
-    if (heldStartMs !== null && Math.abs(note.atMs - heldStartMs) <= ASSESSMENT_SETTINGS.hitWindowMs) continue;
-    result = applyVerdict(result, note.id, 'miss', `Missed ${note.region === 'back' ? 'back blow' : 'abdominal thrust'} ${note.id < 5 ? note.id + 1 : note.id - 4}.`);
+    const { hitWindowMs } = windowsFor(note.region);
+    if (note.verdict || elapsedMs <= note.atMs + hitWindowMs) continue;
+    if (heldStartMs !== null && Math.abs(note.atMs - heldStartMs) <= hitWindowMs) continue;
+    result = applyVerdict(result, note.id, 'miss', `Missed ${noteLabel(note).toLowerCase()}.`);
   }
   return result;
 }

@@ -356,10 +356,11 @@ export function TrainerExperience() {
     ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review')
     : scenario === 'unresponsive' ? 'cpr' : cough.phase === 'observe' ? 'cough' : 'coughFailing';
   const coughFailing = scenario === 'cough' && cough.phase === 'failing';
-  const recommended: SensorId | null = assessmentRunning
+  const chokingCheck = assessmentRunning && phase !== 'cpr';
+  const recommended: SensorId | null = chokingCheck
     ? (assessmentRegion === 'back' ? 5 : 0)
     : phase === 'back' || coughFailing ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 8 : null;
-  const defaultView: View = assessmentRunning ? assessmentRegion : phase === 'back' || phase === 'coughFailing' ? 'back' : 'front';
+  const defaultView: View = chokingCheck ? assessmentRegion : phase === 'back' || phase === 'coughFailing' ? 'back' : 'front';
   const view = viewOverride ?? defaultView;
   const active = readings.reduce<{ value: number; id: SensorId | null }>((top, value, i) => {
     const delta = Math.max(0, value - baseline[i]);
@@ -813,7 +814,7 @@ export function TrainerExperience() {
           simBusyRef.current = false;
           setSimBusy(false);
           simTimer.current = null;
-        }, 70);
+        }, 60);
         return;
       }
 
@@ -1156,12 +1157,15 @@ export function TrainerExperience() {
   }
   if (phase === 'cpr') { promptTag = `CPR · CYCLE ${cpr.cycles.length + 1} · ${cpr.current.length} OF ${CPR_SETTINGS.cycleLength}`; instruction = 'Give chest compressions'; guide = 'Target: centre of chest, 100–120 per minute'; }
 
-  if (assessmentRunning) {
+  if (assessmentRunning && phase === 'cpr') {
+    promptTag = 'SKILL CHECK · CHEST COMPRESSIONS';
+    instruction = 'Match the compression rhythm';
+  } else if (assessmentRunning) {
     promptTag = assessmentRegion === 'back' ? 'SKILL CHECK · BACK BLOWS' : 'SKILL CHECK · ABDOMINAL THRUSTS';
     instruction = assessmentRegion === 'back' ? 'Match the back-blow rhythm' : 'Match the abdominal-thrust rhythm';
     guide = assessmentRegion === 'back' ? 'Between the shoulder blades' : 'Upper abdomen, above the navel';
   }
-  const howTo = PHASE_GUIDES[assessmentRunning ? assessmentRegion : phase];
+  const howTo = PHASE_GUIDES[chokingCheck ? assessmentRegion : phase];
   const cprRate = liveRate(cpr.current);
   const cprRecoil = cpr.current.filter(item => item.recoilOk !== null);
   const cprRecoilPct = cprRecoil.length ? Math.round(cprRecoil.filter(item => item.recoilOk).length / cprRecoil.length * 100) : null;
@@ -1221,7 +1225,7 @@ export function TrainerExperience() {
   );
 
 
-  const phaseRegion: SpatialRegion | null = assessmentRunning
+  const phaseRegion: SpatialRegion | null = chokingCheck
     ? assessmentRegion
     : phase === 'front' || phase === 'back' ? phase : coughFailing ? 'back' : null;
   const activeRegion: SpatialRegion | 'cpr' | null = active === null
@@ -1281,9 +1285,6 @@ export function TrainerExperience() {
       </div>
     </header>
     <main className={mode === 'train' ? 'container compact-training-page' : 'container'}>
-      {mode !== 'train' && <div className="page-intro streamlined-title">
-        <h1>{mode === 'calibrate' ? 'Calibration' : 'Sensor test'}</h1>
-      </div>}
       <div className="modebar" aria-label="Trainer modes">
         <div className="mode-tabs" role="tablist" aria-label="Training tools">
           <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('train'); }}>Practice</button>
@@ -1309,7 +1310,6 @@ export function TrainerExperience() {
           <article className="visual-panel">
             <div className="visual-head">
               <div>
-                <div className="small-label">MANNEQUIN</div>
                 <strong>Practice placement</strong></div>
               <div className="view-switch">
                 <button type="button" className={view === 'back' ? 'on' : ''} onClick={() => setViewOverride('back')}>Back</button>
@@ -1405,11 +1405,13 @@ export function TrainerExperience() {
           </button>
           <div id="rhythm-game-content" className="rhythm-game-content" hidden={rhythmCollapsed}>
           <AssessmentGame
+              key={scenario === 'unresponsive' ? 'cpr' : 'choking'}
+              mode={scenario === 'unresponsive' ? 'cpr' : 'choking'}
               inputRef={gameInputRef}
               baseline={baseline}
               threshold={threshold}
               spatialSamples={spatialSamples}
-              enabled={scenario === 'severe'}
+              enabled={scenario === 'severe' || scenario === 'unresponsive'}
               onActiveChange={onAssessmentActiveChange}
               onPlacementScore={recordAssessmentPlacement}
               onRegionChange={region => { setAssessmentRegion(region); setViewOverride(null); }}

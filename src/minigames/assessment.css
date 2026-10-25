@@ -1,36 +1,36 @@
 /* The rhythm assessment only; intentionally does not target body SVG/heatmap styles. */
 .assessment-panel{font-family:Manrope,system-ui,sans-serif;border:1px solid #dceae3;border-radius:15px;background:#fff;box-shadow:0 12px 35px rgba(36,71,55,.035);padding:22px;min-width:0;display:flex;flex-direction:column;gap:15px}
 .assessment-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.assessment-heading h2{font-size:25px;letter-spacing:-.055em;margin:3px 0;color:#224e42}
-.assessment-heading p{font-size:12px;color:#637d71;line-height:1.55;margin:0;max-width:390px}
-.assessment-mode-tag{flex-shrink:0;font-size:9px;font-weight:900;border-radius:7px;padding:7px 9px;color:#268972;background:#ebf7f1;letter-spacing:.04em;white-space:nowrap}
+.assessment-heading h2{font-size:27px;letter-spacing:-.055em;margin:3px 0;color:#224e42}
+.assessment-heading p{font-size:13px;color:#637d71;line-height:1.55;margin:0;max-width:390px}
+.assessment-mode-tag{flex-shrink:0;font-size:10px;font-weight:900;border-radius:7px;padding:7px 9px;color:#268972;background:#ebf7f1;letter-spacing:.04em;white-space:nowrap}
 .assessment-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
 .assessment-stats>div{background:#f4f9f5;border:1px solid #e6f0e8;border-radius:9px;padding:11px}
-.assessment-stats small{display:block;font-size:9px;font-weight:900;letter-spacing:.11em;color:#729386}
-.assessment-stats strong{display:block;color:#1d5748;font-size:25px;letter-spacing:-.06em;margin-top:2px;font-variant-numeric:tabular-nums}
-.assessment-stats strong span{font-size:15px;margin-left:1px;color:#7b9c90}
+.assessment-stats small{display:block;font-size:10px;font-weight:900;letter-spacing:.11em;color:#729386}
+.assessment-stats strong{display:block;color:#1d5748;font-size:27px;letter-spacing:-.06em;margin-top:2px;font-variant-numeric:tabular-nums}
+.assessment-stats strong span{font-size:16px;margin-left:1px;color:#7b9c90}
 .assessment-stage{background:#102729;border-radius:14px;color:#e1faf0;overflow:hidden;padding:14px 0 0;position:relative}
-.assessment-stage-top{display:flex;gap:9px;align-items:center;padding:0 17px 13px;font-size:10px;letter-spacing:.12em;font-weight:800;color:#b5d6c9}
-.assessment-stage-top strong{margin-left:auto;font-size:11px;color:#fff;font-variant-numeric:tabular-nums}
+.assessment-stage-top{display:flex;gap:9px;align-items:center;padding:0 17px 13px;font-size:11px;letter-spacing:.12em;font-weight:800;color:#b5d6c9}
+.assessment-stage-top strong{margin-left:auto;font-size:12px;color:#fff;font-variant-numeric:tabular-nums}
 .assessment-live-dot{height:7px;width:7px;border-radius:50%;background:#4bddab;box-shadow:0 0 10px #4bddab}
 .assessment-timeline{height:194px;position:relative;overflow:hidden;background:linear-gradient(90deg,#193638,#193638 1px,transparent 1px) 0 0/45px 100%,linear-gradient(#122d2e,#183334)}
 .assessment-lane{position:relative;height:78px;border-block-start:1px solid #345351}
-.assessment-lane-name{position:absolute;z-index:1;right:12px;top:9px;color:#759e99;font-size:9px;font-weight:900;letter-spacing:.13em}
+.assessment-lane-name{position:absolute;z-index:1;right:12px;top:9px;color:#759e99;font-size:10px;font-weight:900;letter-spacing:.13em}
 .assessment-hit-line{position:absolute;z-index:3;left:14%;top:0;bottom:25px;border-left:2px solid #b9ffe0;filter:drop-shadow(0 0 6px #4ee9b4)}
-.assessment-hit-line span{position:absolute;top:0;left:-15px;background:#b5f5d5;color:#1b4840;border-radius:0 0 5px 5px;font-size:8px;padding:2px 5px;font-weight:900;letter-spacing:.1em}
+.assessment-hit-line span{position:absolute;top:0;left:-15px;background:#b5f5d5;color:#1b4840;border-radius:0 0 5px 5px;font-size:9px;padding:2px 5px;font-weight:900;letter-spacing:.1em}
 .assessment-note{position:absolute;left:var(--note-x);width:var(--note-width);height:37px;top:26px;display:flex;align-items:center;border-radius:7px;gap:4px;box-shadow:0 0 17px #54ffad55;transition:opacity .16s ease,filter .16s ease;will-change:left;overflow:hidden}
 .assessment-note.back{background:linear-gradient(105deg,#48dbaa,#18886b);border:1px solid #a6ffdb}
 .assessment-note.front{background:linear-gradient(105deg,#f4c978,#ce8c4b);border:1px solid #ffe5a8;box-shadow:0 0 17px #ffc87355}
-.assessment-note b{color:#102c2a;min-width:13px;font-size:12px;margin-left:6px}
+.assessment-note b{color:#102c2a;min-width:13px;font-size:13px;margin-left:6px}
 .assessment-hold-strip{position:absolute;height:4px;bottom:3px;left:5px;right:5px;background:#fff9;border-radius:5px}
 .assessment-note.judged{filter:grayscale(1);opacity:.12}
-.assessment-timeline-bottom{font-size:9px;display:flex;align-items:center;justify-content:space-between;padding:7px 14px;color:#92b4a8;letter-spacing:.04em}
+.assessment-timeline-bottom{font-size:10px;display:flex;align-items:center;justify-content:space-between;padding:7px 14px;color:#92b4a8;letter-spacing:.04em}
 .assessment-switch{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;padding:0 16px;background:#122d2e59;pointer-events:none;animation:assessment-feedback-pop .26s ease-out}
-.assessment-switch strong{color:#ffde97;font-size:20px;letter-spacing:-.03em;text-shadow:0 1px 8px #0b1f20,0 0 2px #0b1f20}
-.assessment-switch span{color:#d3e6df;font-size:11px;line-height:1.4;text-shadow:0 1px 6px #0b1f20,0 0 2px #0b1f20}
+.assessment-switch strong{color:#ffde97;font-size:21px;letter-spacing:-.03em;text-shadow:0 1px 8px #0b1f20,0 0 2px #0b1f20}
+.assessment-switch span{color:#d3e6df;font-size:12px;line-height:1.4;text-shadow:0 1px 6px #0b1f20,0 0 2px #0b1f20}
 .assessment-verdict{min-height:80px;border-top:1px solid #365552;padding:15px 17px;display:flex;flex-direction:column;justify-content:center;gap:4px;animation:assessment-feedback-pop .26s ease-out}
-.assessment-verdict strong{font-size:24px;color:#bdffe0;letter-spacing:-.035em}
-.assessment-verdict span{color:#adcbc1;font-size:11px;line-height:1.6}
+.assessment-verdict strong{font-size:26px;color:#bdffe0;letter-spacing:-.035em}
+.assessment-verdict span{color:#adcbc1;font-size:12px;line-height:1.6}
 .assessment-verdict.wrong-area strong,.assessment-verdict.wrong-duration strong,.assessment-verdict.off-beat strong,.assessment-verdict.miss strong{color:#ff9a95}
 .assessment-verdict.good strong,.assessment-verdict.okay strong{color:#ffde97}
 .assessment-progress-cells{display:flex;gap:5px}
@@ -38,25 +38,25 @@
 .assessment-progress-cells span.perfect{background:#19b989}.assessment-progress-cells span.good{background:#8ed3ac}.assessment-progress-cells span.okay{background:#e6c371}
 .assessment-progress-cells span.wrong-area,.assessment-progress-cells span.wrong-duration,.assessment-progress-cells span.miss{background:#df8b87}
 .assessment-next-action{display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px}
-.assessment-next-action span{color:#729083;font-weight:900;font-size:10px;letter-spacing:.08em}
-.assessment-next-action strong{color:#275344;font-size:12px}
-.assessment-pacing p{color:#87978f;font-size:10px;line-height:1.6;margin:9px 0 0}
+.assessment-next-action span{color:#729083;font-weight:900;font-size:11px;letter-spacing:.08em}
+.assessment-next-action strong{color:#275344;font-size:13px}
+.assessment-pacing p{color:#87978f;font-size:11px;line-height:1.6;margin:9px 0 0}
 .assessment-result{background:#f0f8f3;border-radius:9px;padding:13px;display:flex;flex-direction:column;gap:5px}
-.assessment-result strong{color:#146b50;font-size:15px}.assessment-result span{font-size:11px;color:#667f72;line-height:1.5}
+.assessment-result strong{color:#146b50;font-size:16px}.assessment-result span{font-size:12px;color:#667f72;line-height:1.5}
 .assessment-controls{display:flex;align-items:center;gap:9px;margin-top:auto}
 .assessment-controls .button-primary,.assessment-controls .button-outline{flex:1;justify-content:center}
-.assessment-sound{border:1px solid #dce9e2;background:white;border-radius:8px;color:#668478;padding:10px;font-size:11px;cursor:pointer}
+.assessment-sound{border:1px solid #dce9e2;background:white;border-radius:8px;color:#668478;padding:10px;font-size:12px;cursor:pointer}
 .assessment-demo-buttons{border-top:1px solid #eef2ee;padding-top:11px;display:flex;gap:5px;align-items:center;flex-wrap:wrap}
-.assessment-demo-buttons span{font-size:9px;letter-spacing:.07em;color:#79968b;font-weight:800;flex:1 0 100%}
-.assessment-demo-buttons button{font-size:10px;background:#eff8f2;border:1px solid #d7e8dc;color:#20735c;padding:8px 10px;border-radius:7px;cursor:pointer}
+.assessment-demo-buttons span{font-size:10px;letter-spacing:.07em;color:#79968b;font-weight:800;flex:1 0 100%}
+.assessment-demo-buttons button{font-size:11px;background:#eff8f2;border:1px solid #d7e8dc;color:#20735c;padding:8px 10px;border-radius:7px;cursor:pointer}
 .assessment-demo-buttons button:disabled{opacity:.5;cursor:default}
 .assessment-latency{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.assessment-latency label{font-size:10px;color:#70877a}.assessment-latency b{color:#286d58}.assessment-latency input{width:120px;accent-color:#008d72}
+.assessment-latency label{font-size:11px;color:#70877a}.assessment-latency b{color:#286d58}.assessment-latency input{width:120px;accent-color:#008d72}
 @keyframes assessment-feedback-pop{from{opacity:.6;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
 @media(prefers-reduced-motion:reduce){.assessment-verdict{animation:none}.assessment-note{transition:none}}
 
 .assessment-contact-duration{margin-top:10px}
-.assessment-contact-duration>div:first-child{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:#81968b}
+.assessment-contact-duration>div:first-child{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#81968b}
 .assessment-contact-duration strong{color:#236951}
 .assessment-duration-track{height:5px;overflow:hidden;background:#ebf1ea;border-radius:5px;margin-top:6px}
 .assessment-duration-track i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#25ae84,#82ddab);transition:width .055s linear}
@@ -126,17 +126,14 @@
   gap: 12px;
 }
 .compact-training-page .page-intro h1 {
-  font-size: clamp(21px, 2.05vw, 29px);
+  font-size: clamp(23px, 2.05vw, 31px);
   margin: 2px 0 1px;
   line-height: 1.12;
 }
-.compact-training-page .page-intro .eyebrow { font-size: 8px; }
-.compact-training-page .page-intro p { font-size: 10px; line-height: 1.25; }
+.compact-training-page .page-intro .eyebrow { font-size: 9px; }
+.compact-training-page .page-intro p { font-size: 11px; line-height: 1.25; }
 .compact-training-page .intro-note { transform: scale(.88); transform-origin: right center; }
-/* Header, tabs and scenario bar keep the same size as the other pages; only
-   the panels below are compacted. The page title is hidden here, so give
-   the tabs the breathing room it would have provided. */
-.compact-training-page .modebar { margin-top: 26px; }
+
 
 /* The original three teaching sections stay in their familiar order.
    Any content taller than the allotted height remains scrollable in-card. */
@@ -160,11 +157,11 @@
 }
 .compact-training-page .instruction-top { margin-bottom: 10px; }
 .compact-training-page .instruction-panel h2 {
-  font-size: clamp(18px, 1.65vw, 23px);
+  font-size: clamp(19px, 1.65vw, 25px);
   line-height: 1.2;
   margin: 9px 0;
 }
-.compact-training-page .instruction-panel .step-list { font-size: 11px; line-height: 1.42; }
+.compact-training-page .instruction-panel .step-list { font-size: 12px; line-height: 1.42; }
 .compact-training-page .instruction-panel .guide-callout { padding: 8px; }
 .compact-training-page .instruction-panel .sequence-panel { padding-top: 8px; margin-top: 9px; }
 .compact-training-page .with-bottom-assessment > .visual-panel {
@@ -175,7 +172,7 @@
   max-height: clamp(220px, 29dvh, 320px);
 }
 .compact-training-page .with-bottom-assessment .mannequin-guide {
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.3;
   margin-top: 0;
 }
@@ -189,12 +186,12 @@
   overscroll-behavior: contain;
 }
 .compact-training-page .coach-title { margin-bottom: 4px; gap: 8px; }
-.compact-training-page .coach-badge { height: 30px; width: 30px; font-size: 18px; }
+.compact-training-page .coach-badge { height: 30px; width: 30px; font-size: 19px; }
 .compact-training-page .coach-panel .feedback-box { min-height: 0; padding: 10px 11px; }
 .compact-training-page .coach-panel .feedback-box strong { margin: 2px 0 3px; }
 .compact-training-page .coach-panel .feedback-box p { line-height: 1.4; }
 .compact-training-page .coach-panel .assistant-box { margin-top: 2px; padding: 9px 10px; gap: 6px; }
-.compact-training-page .coach-panel .assistant-toggle { font-size: 10px; }
+.compact-training-page .coach-panel .assistant-toggle { font-size: 11px; }
 .compact-training-page .coach-panel .live-readout { padding: 7px 0; }
 .compact-training-page .coach-panel .airway-row { margin-top: 5px; }
 
@@ -217,61 +214,61 @@
   align-items: start;
 }
 .compact-training-page .bottom-rhythm-section .assessment-heading { grid-area: heading; align-items: center; gap: 10px; }
-.compact-training-page .bottom-rhythm-section .assessment-heading h2 { margin: 0; font-size: 20px; }
-.compact-training-page .bottom-rhythm-section .assessment-heading p { font-size: 9px; line-height: 1.2; }
-.compact-training-page .bottom-rhythm-section .assessment-mode-tag { padding: 5px 8px; font-size: 8px; }
+.compact-training-page .bottom-rhythm-section .assessment-heading h2 { margin: 0; font-size: 21px; }
+.compact-training-page .bottom-rhythm-section .assessment-heading p { font-size: 10px; line-height: 1.2; }
+.compact-training-page .bottom-rhythm-section .assessment-mode-tag { padding: 5px 8px; font-size: 9px; }
 .compact-training-page .bottom-rhythm-section .assessment-stats { grid-area: stats; gap: 5px; }
 .compact-training-page .bottom-rhythm-section .assessment-stats > div { padding: 4px 7px; }
-.compact-training-page .bottom-rhythm-section .assessment-stats small { font-size: 8px; }
-.compact-training-page .bottom-rhythm-section .assessment-stats strong { font-size: 16px; margin-top: 0; }
-.compact-training-page .bottom-rhythm-section .assessment-stats strong span { font-size: 11px; }
+.compact-training-page .bottom-rhythm-section .assessment-stats small { font-size: 9px; }
+.compact-training-page .bottom-rhythm-section .assessment-stats strong { font-size: 17px; margin-top: 0; }
+.compact-training-page .bottom-rhythm-section .assessment-stats strong span { font-size: 12px; }
 .compact-training-page .bottom-rhythm-section .assessment-stage { grid-area: stage; min-width: 0; height: 100%; padding-top: 7px; }
-.compact-training-page .bottom-rhythm-section .assessment-stage-top { padding: 0 10px 5px; font-size: 9px; }
+.compact-training-page .bottom-rhythm-section .assessment-stage-top { padding: 0 10px 5px; font-size: 10px; }
 .compact-training-page .bottom-rhythm-section .assessment-timeline { height: 107px; }
 .compact-training-page .bottom-rhythm-section .assessment-lane { height: 41px; }
-.compact-training-page .bottom-rhythm-section .assessment-lane-name { font-size: 8px; top: 5px; }
+.compact-training-page .bottom-rhythm-section .assessment-lane-name { font-size: 9px; top: 5px; }
 .compact-training-page .bottom-rhythm-section .assessment-note { top: 8px; height: 26px; border-radius: 5px; }
-.compact-training-page .bottom-rhythm-section .assessment-timeline-bottom { padding: 4px 9px; font-size: 8px; }
+.compact-training-page .bottom-rhythm-section .assessment-timeline-bottom { padding: 4px 9px; font-size: 9px; }
 .compact-training-page .bottom-rhythm-section .assessment-hit-line { bottom: 24px; }
 .compact-training-page .bottom-rhythm-section .assessment-verdict {
   padding: 5px 11px; min-height: 39px; gap: 1px;
 }
-.compact-training-page .bottom-rhythm-section .assessment-verdict strong { font-size: 17px; }
-.compact-training-page .bottom-rhythm-section .assessment-verdict span { font-size: 9px; line-height: 1.32; }
+.compact-training-page .bottom-rhythm-section .assessment-verdict strong { font-size: 18px; }
+.compact-training-page .bottom-rhythm-section .assessment-verdict span { font-size: 10px; line-height: 1.32; }
 .compact-training-page .bottom-rhythm-section .assessment-shatter { top: 8px; height: 26px; }
 .compact-training-page .bottom-rhythm-section .assessment-shatter.front { top: 49px; }
 .compact-training-page .bottom-rhythm-section .assessment-pacing { grid-area: pacing; min-width: 0; }
 .compact-training-page .bottom-rhythm-section .assessment-progress-cells span { height: 5px; }
 .compact-training-page .bottom-rhythm-section .assessment-next-action { margin-top: 4px; }
-.compact-training-page .bottom-rhythm-section .assessment-next-action span { font-size: 8px; }
-.compact-training-page .bottom-rhythm-section .assessment-next-action strong { font-size: 10px; }
+.compact-training-page .bottom-rhythm-section .assessment-next-action span { font-size: 9px; }
+.compact-training-page .bottom-rhythm-section .assessment-next-action strong { font-size: 11px; }
 .compact-training-page .bottom-rhythm-section .assessment-contact-duration { margin-top: 4px; }
-.compact-training-page .bottom-rhythm-section .assessment-contact-duration > div:first-child { font-size: 9px; }
+.compact-training-page .bottom-rhythm-section .assessment-contact-duration > div:first-child { font-size: 10px; }
 .compact-training-page .bottom-rhythm-section .assessment-duration-track { margin-top: 3px; height: 4px; }
-.compact-training-page .bottom-rhythm-section .assessment-pacing p { font-size: 9px; line-height: 1.25; margin: 4px 0 0; }
+.compact-training-page .bottom-rhythm-section .assessment-pacing p { font-size: 10px; line-height: 1.25; margin: 4px 0 0; }
 .compact-training-page .bottom-rhythm-section .assessment-controls { grid-area: controls; margin: 0; gap: 6px; }
 .compact-training-page .bottom-rhythm-section .assessment-controls button,
-.compact-training-page .bottom-rhythm-section .assessment-demo-buttons button { padding: 6px 9px; font-size: 10px; }
+.compact-training-page .bottom-rhythm-section .assessment-demo-buttons button { padding: 6px 9px; font-size: 11px; }
 .compact-training-page .bottom-rhythm-section .assessment-demo-buttons { grid-area: demo; padding: 3px 0 0; gap: 5px; }
-.compact-training-page .bottom-rhythm-section .assessment-demo-buttons span { flex: 1 0 100%; font-size: 8px; }
+.compact-training-page .bottom-rhythm-section .assessment-demo-buttons span { flex: 1 0 100%; font-size: 9px; }
 .compact-training-page .bottom-rhythm-section .assessment-latency { grid-area: latency; gap: 8px; }
-.compact-training-page .bottom-rhythm-section .assessment-latency label { font-size: 9px; }
+.compact-training-page .bottom-rhythm-section .assessment-latency label { font-size: 10px; }
 .compact-training-page .bottom-rhythm-section .assessment-latency input { width: 90px; }
 .compact-training-page .bottom-rhythm-section .assessment-result { grid-column: 1 / -1; padding: 7px 9px; }
-.compact-training-page .bottom-rhythm-section .assessment-availability { grid-column: 1 / -1; font-size: 10px; }
+.compact-training-page .bottom-rhythm-section .assessment-availability { grid-column: 1 / -1; font-size: 11px; }
 
 /* The existing demo buttons, raw data and session snapshot remain available,
    without using another 150px of vertical whitespace. */
 .compact-training-page .action-strip { margin-top: 8px; padding: 7px 11px; gap: 10px; }
-.compact-training-page .action-strip-icon { width: 27px; height: 27px; font-size: 15px; }
+.compact-training-page .action-strip-icon { width: 27px; height: 27px; font-size: 16px; }
 .compact-training-page .action-strip-copy { gap: 8px; }
-.compact-training-page .action-strip-copy span:not(.action-strip-icon) { font-size: 9px; }
+.compact-training-page .action-strip-copy span:not(.action-strip-icon) { font-size: 10px; }
 .compact-training-page .action-strip-controls { gap: 5px; }
 .compact-training-page .action-strip-controls .button-primary,
-.compact-training-page .action-strip-controls .button-outline { padding: 7px 9px; font-size: 10px; }
+.compact-training-page .action-strip-controls .button-outline { padding: 7px 9px; font-size: 11px; }
 .compact-training-page .summary-bar { padding: 7px 0 9px; gap: 8px; }
 .compact-training-page .summary-bar > div:first-child { gap: 1px; }
-.compact-training-page .summary-bar > div:first-child > span:last-child { font-size: 9px; }
+.compact-training-page .summary-bar > div:first-child > span:last-child { font-size: 10px; }
 .compact-training-page .summary-controls .button-outline { padding: 6px 8px; }
 
 /* Small screens must scroll rather than clip controls, especially Gemini. */
@@ -320,7 +317,7 @@
   margin: 0;
 }
 .compact-training-page .streamlined-title h1 {
-  font-size: clamp(19px, 1.7vw, 26px);
+  font-size: clamp(20px, 1.7vw, 28px);
   letter-spacing: -.045em;
   line-height: 1.15;
   margin: 0;
@@ -365,9 +362,9 @@
 .placement-inline.warning .placement-inline-dot { background: #da956b; }
 .placement-inline.success .placement-inline-dot { background: #36a678; }
 .placement-inline-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.placement-inline-copy strong { font-size: 11px; line-height: 1.2; }
-.placement-inline-copy > span { font-size: 10px; line-height: 1.35; }
-.placement-inline > b { white-space: nowrap; font-size: 12px; }
+.placement-inline-copy strong { font-size: 12px; line-height: 1.2; }
+.placement-inline-copy > span { font-size: 11px; line-height: 1.35; }
+.placement-inline > b { white-space: nowrap; font-size: 13px; }
 
 /* The Q&A remains available, but takes no space in the teaching grid. */
 .gemini-quick-menu { position: relative; flex-shrink: 0; }
@@ -395,12 +392,12 @@
   background: #fff;
   box-shadow: 0 18px 50px rgba(21, 55, 46, .18);
 }
-.gemini-quick-popover > strong { color: #214e42; font-size: 13px; }
+.gemini-quick-popover > strong { color: #214e42; font-size: 14px; }
 .gemini-quick-popover .button-primary { justify-content: center; gap: 8px; }
-.gemini-wake-toggle { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #56776a; }
-.gemini-status { font-size: 10px; line-height: 1.45; color: #668278; margin: 0; }
+.gemini-wake-toggle { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #56776a; }
+.gemini-status { font-size: 11px; line-height: 1.45; color: #668278; margin: 0; }
 .gemini-exchange { background: #f5f8f6; padding: 8px; border-radius: 8px; max-height: 150px; overflow-y: auto; }
-.gemini-exchange b, .gemini-exchange p { display: block; margin: 0; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.gemini-exchange b, .gemini-exchange p { display: block; margin: 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .gemini-exchange p { margin-top: 6px; color: #42584f; }
 
 @media (max-width: 1000px) {
@@ -439,7 +436,7 @@
 }
 .compact-training-page .three-column-training > .visual-panel { padding: 11px 12px 7px; }
 .compact-training-page .three-column-training .body-illustration { max-height: clamp(255px, calc(100dvh - 470px), 370px); }
-.compact-training-page .three-column-training .mannequin-guide { font-size: 9px; }
+.compact-training-page .three-column-training .mannequin-guide { font-size: 10px; }
 .compact-training-page .three-column-training > .learning-coach-panel {
   padding: 11px 14px;
   gap: 0;
@@ -448,48 +445,48 @@
   position: relative;
 }
 .compact-training-page .learning-coach-panel .instruction-top { margin-bottom: 6px; }
-.compact-training-page .learning-coach-panel .step-tag { font-size: 9px; padding: 5px 7px; align-self: start; }
-.compact-training-page .learning-coach-panel h2 { font-size: clamp(16px, 1.5vw, 21px); margin: 5px 0; }
-.compact-training-page .learning-coach-panel .step-list { font-size: 10px; line-height: 1.3; margin: 3px 0 6px; padding-left: 19px; }
+.compact-training-page .learning-coach-panel .step-tag { font-size: 10px; padding: 5px 7px; align-self: start; }
+.compact-training-page .learning-coach-panel h2 { font-size: clamp(17px, 1.5vw, 23px); margin: 5px 0; }
+.compact-training-page .learning-coach-panel .step-list { font-size: 11px; line-height: 1.3; margin: 3px 0 6px; padding-left: 19px; }
 .compact-training-page .learning-coach-panel .step-list li { margin: 1px 0; }
 .compact-training-page .learning-coach-panel .placement-inline { margin-top: 5px; padding: 6px 7px; }
-.compact-training-page .learning-coach-panel .placement-inline-copy > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 9px; }
-.learning-target { background: #f0f8f3; padding: 6px 8px; border-radius: 8px; display: flex; gap: 8px; align-items: center; font-size: 10px; color: #34745f; }
+.compact-training-page .learning-coach-panel .placement-inline-copy > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 10px; }
+.learning-target { background: #f0f8f3; padding: 6px 8px; border-radius: 8px; display: flex; gap: 8px; align-items: center; font-size: 11px; color: #34745f; }
 .learning-target > strong { flex: 1; }
 .learning-target > button { border: 0; background: transparent; color: #217762; cursor: pointer; padding: 4px; display: grid; place-items: center; }
-.learning-transition { align-self: flex-start; margin-top: 5px; font-size: 10px; }
+.learning-transition { align-self: flex-start; margin-top: 5px; font-size: 11px; }
 .gemini-inline { margin-top: auto; border-top: 1px solid #e4ede7; padding-top: 8px; display: flex; flex-direction: column; gap: 5px; min-height: 0; }
 .gemini-inline-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.gemini-inline-head > strong { color: #246851; font-size: 12px; }
+.gemini-inline-head > strong { color: #246851; font-size: 13px; }
 .gemini-inline-head > strong span { color: #14a582; }
-.gemini-inline .gemini-wake-toggle { white-space: nowrap; font-size: 9px; }
-.gemini-inline-mic { background: #e6f6ed; color: #166a53; border: 1px solid #b9dccb; padding: 7px 10px; border-radius: 8px; display: flex; gap: 7px; align-items: center; justify-content: center; font-weight: 750; font-size: 11px; }
-.gemini-inline-status { font-size: 9px; color: #64877a; line-height: 1.3; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.gemini-inline-answer { position: relative; background: #f2f8f4; border-radius: 7px; padding: 5px 7px; font-size: 10px; }
+.gemini-inline .gemini-wake-toggle { white-space: nowrap; font-size: 10px; }
+.gemini-inline-mic { background: #e6f6ed; color: #166a53; border: 1px solid #b9dccb; padding: 7px 10px; border-radius: 8px; display: flex; gap: 7px; align-items: center; justify-content: center; font-weight: 750; font-size: 12px; }
+.gemini-inline-status { font-size: 10px; color: #64877a; line-height: 1.3; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gemini-inline-answer { position: relative; background: #f2f8f4; border-radius: 7px; padding: 5px 7px; font-size: 11px; }
 .gemini-inline-answer > strong, .gemini-inline-answer > p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; overflow-wrap: anywhere; }
 .gemini-inline-answer > p { color: #3f695b; }
-.gemini-inline-answer details summary { cursor: pointer; color: #1b735a; font-size: 9px; }
+.gemini-inline-answer details summary { cursor: pointer; color: #1b735a; font-size: 10px; }
 .gemini-inline-answer details[open] { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; padding: 10px; background: #fff; border: 1px solid #c8e3d3; box-shadow: 0 10px 30px #1b49351c; border-radius: 8px; }
 .gemini-inline-answer details[open] p { max-height: min(35dvh, 210px); overflow: auto; }
 .placement-score-panel { background: #fff; border: 1px solid #e0ebe4; border-radius: 15px; padding: 13px; display: flex; flex-direction: column; gap: 9px; box-shadow: 0 12px 35px rgba(36,71,55,.025); }
 .scoreboard-header { display: flex; flex-direction: column; gap: 2px; }
-.scoreboard-header > strong { font-size: 15px; color: #214b40; letter-spacing: -.03em; }
+.scoreboard-header > strong { font-size: 16px; color: #214b40; letter-spacing: -.03em; }
 .regional-score { background: #f2f9f5; border: 1px solid #dceee1; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
 .regional-score.front { background: #fff9f0; border-color: #f2e2c9; }
-.regional-score-title { display: flex; align-items: center; gap: 4px; justify-content: space-between; font-size: 11px; font-weight: 700; color: #285f4c; }
+.regional-score-title { display: flex; align-items: center; gap: 4px; justify-content: space-between; font-size: 12px; font-weight: 700; color: #285f4c; }
 .regional-score.front .regional-score-title { color: #8e6735; }
-.regional-score-title b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.regional-score-title b { font-size: 18px; font-variant-numeric: tabular-nums; }
 .regional-score-track { background: #d6e9dc; height: 7px; border-radius: 5px; overflow: hidden; }
 .regional-score.front .regional-score-track { background: #efdfc7; }
 .regional-score-track > span { display: block; height: 100%; background: #24b78a; border-radius: 5px; transition: width .2s; }
 .regional-score.front .regional-score-track > span { background: #e9a849; }
-.regional-score-meta { display: flex; justify-content: space-between; gap: 5px; font-size: 9px; color: #799184; }
+.regional-score-meta { display: flex; justify-content: space-between; gap: 5px; font-size: 10px; color: #799184; }
 .placement-session-progress { border-top: 1px solid #e4ebe5; padding-top: 7px; display: flex; flex-direction: column; gap: 4px; }
-.placement-session-progress > div:not(.progress-track) { display: flex; justify-content: space-between; font-size: 10px; }
+.placement-session-progress > div:not(.progress-track) { display: flex; justify-content: space-between; font-size: 11px; }
 .placement-session-progress .progress-track { width: 100%; height: 5px; }
-.scoreboard-footer { margin-top: auto; display: flex; gap: 7px; align-items: center; justify-content: space-between; font-size: 10px; color: #5f7f73; }
-.scoreboard-footer .text-button { font-size: 10px; padding: 3px; }
-.scoreboard-disclaimer { margin: 0; font-size: 9px; line-height: 1.3; color: #819389; }
+.scoreboard-footer { margin-top: auto; display: flex; gap: 7px; align-items: center; justify-content: space-between; font-size: 11px; color: #5f7f73; }
+.scoreboard-footer .text-button { font-size: 11px; padding: 3px; }
+.scoreboard-disclaimer { margin: 0; font-size: 10px; line-height: 1.3; color: #819389; }
 /* A single full-width playfield, without diagnostic/demo controls. */
 .compact-training-page .bottom-rhythm-section { margin-top: 8px; }
 .compact-training-page .bottom-rhythm-section > .rhythm-game-content > .assessment-panel {
@@ -513,7 +510,7 @@
 .compact-training-page .summary-bar, .training-shell .footer { display: none; }
 .sensor-demo-tools { margin: 0 0 15px; background: #f5faf6; border: 1px solid #dce9e0; border-radius: 9px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
 .sensor-demo-tools > strong { color: #265949; }
-.sensor-demo-tools > span { color: #779083; font-size: 11px; }
+.sensor-demo-tools > span { color: #779083; font-size: 12px; }
 .sensor-demo-tools > div:not(.raw-grid) { display: flex; gap: 7px; flex-wrap: wrap; }
 .sensor-demo-tools .raw-grid { margin-top: 6px; }
 @media (max-width: 840px) {
@@ -582,11 +579,11 @@
 /* Balanced spacing without concealing the microphone, wake-word or responses. */
 .compact-training-page .learning-coach-panel .instruction-top { margin-bottom: 9px; }
 .compact-training-page .learning-coach-panel h2 {
-  font-size: clamp(18px, 1.6vw, 24px);
+  font-size: clamp(19px, 1.6vw, 26px);
   margin: 8px 0;
 }
 .compact-training-page .learning-coach-panel .step-list {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.42;
   margin-bottom: 8px;
 }
@@ -596,7 +593,7 @@
   gap: 6px;
 }
 .compact-training-page .learning-coach-panel .placement-inline-copy > span {
-  font-size: 9px;
+  font-size: 10px;
   -webkit-line-clamp: 1;
 }
 .compact-training-page .learning-coach-panel .gemini-inline {
@@ -607,11 +604,11 @@
 
 /* Accuracy stays visible, but no longer competes with coaching and the figure. */
 .compact-training-page .placement-score-panel { gap: 7px; }
-.compact-training-page .scoreboard-header > strong { font-size: 13px; }
+.compact-training-page .scoreboard-header > strong { font-size: 14px; }
 .compact-training-page .regional-score { padding: 8px; gap: 5px; }
-.compact-training-page .regional-score-title { font-size: 10px; }
-.compact-training-page .regional-score-title b { font-size: 16px; }
-.compact-training-page .regional-score-meta { flex-wrap: wrap; font-size: 9px; }
+.compact-training-page .regional-score-title { font-size: 11px; }
+.compact-training-page .regional-score-title b { font-size: 17px; }
+.compact-training-page .regional-score-meta { flex-wrap: wrap; font-size: 10px; }
 .compact-training-page .placement-session-progress { padding-top: 6px; gap: 4px; }
 .compact-training-page .scoreboard-footer { flex-wrap: wrap; gap: 4px; }
 .compact-training-page .scoreboard-disclaimer { display: none; }
@@ -622,7 +619,7 @@
   padding: 8px 13px;
   gap: 4px 12px;
 }
-.compact-training-page .bottom-rhythm-section .assessment-heading h2 { font-size: 17px; }
+.compact-training-page .bottom-rhythm-section .assessment-heading h2 { font-size: 18px; }
 .compact-training-page .bottom-rhythm-section .assessment-timeline { height: 82px; }
 .compact-training-page .bottom-rhythm-section .assessment-lane { height: 31px; }
 .compact-training-page .bottom-rhythm-section .assessment-lane-name { top: 5px; }
@@ -633,13 +630,13 @@
   min-height: 30px;
   padding: 4px 10px;
 }
-.compact-training-page .bottom-rhythm-section .assessment-verdict strong { font-size: 15px; }
+.compact-training-page .bottom-rhythm-section .assessment-verdict strong { font-size: 16px; }
 .compact-training-page .bottom-rhythm-section .assessment-verdict span {
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.18;
 }
 .compact-training-page .bottom-rhythm-section .assessment-stage-top { padding-bottom: 3px; }
-.compact-training-page .bottom-rhythm-section .assessment-stats strong { font-size: 15px; }
+.compact-training-page .bottom-rhythm-section .assessment-stats strong { font-size: 16px; }
 
 /* At narrower widths, protect the instructions and Gemini from being squeezed. */
 @media (min-width: 741px) and (max-width: 1060px) {
@@ -750,18 +747,18 @@
     gap: 4px 9px;
     padding: 8px 10px;
   }
-  .compact-training-page .training-assessment-layout .assessment-heading h2 { font-size: 15px; }
-  .compact-training-page .training-assessment-layout .assessment-mode-tag { font-size: 7px; padding: 4px 6px; }
+  .compact-training-page .training-assessment-layout .assessment-heading h2 { font-size: 16px; }
+  .compact-training-page .training-assessment-layout .assessment-mode-tag { font-size: 8px; padding: 4px 6px; }
   .compact-training-page .training-assessment-layout .assessment-timeline { height: 85px; }
   .compact-training-page .training-assessment-layout .assessment-lane { height: 33px; }
   .compact-training-page .training-assessment-layout .assessment-note,
   .compact-training-page .training-assessment-layout .assessment-shatter { top: 6px; height: 22px; }
   .compact-training-page .training-assessment-layout .assessment-shatter.front { top: 39px; }
   .compact-training-page .training-assessment-layout .assessment-verdict { min-height: 31px; padding: 4px 8px; }
-  .compact-training-page .training-assessment-layout .assessment-verdict strong { font-size: 15px; }
+  .compact-training-page .training-assessment-layout .assessment-verdict strong { font-size: 16px; }
   .compact-training-page .training-assessment-layout .assessment-stats { gap: 4px; }
   .compact-training-page .training-assessment-layout .assessment-stats > div { padding: 4px; }
-  .compact-training-page .training-assessment-layout .assessment-stats strong { font-size: 14px; }
+  .compact-training-page .training-assessment-layout .assessment-stats strong { font-size: 15px; }
   .compact-training-page .training-assessment-layout .assessment-controls > button { padding: 5px 10px; }
   .compact-training-page .training-assessment-layout .assessment-stage-top { padding-bottom: 3px; }
   .compact-training-page .training-assessment-layout .assessment-pacing .assessment-next-action { margin-top: 5px; }
@@ -794,7 +791,7 @@
   border-radius: 9px;
   background: #f5faf7;
   color: #245746;
-  font: 700 11px Manrope, system-ui, sans-serif;
+  font: 700 12px Manrope, system-ui, sans-serif;
   cursor: pointer;
   text-align: left;
 }
@@ -805,7 +802,7 @@
 }
 .compact-training-page .rhythm-disclosure-action {
   color: #35806a;
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
 }
 .compact-training-page .rhythm-game-content { min-width: 0; }
@@ -829,17 +826,50 @@
     align-self: end;
   }
 
-  /* Expanded: the coach and accuracy cards shrink to their content so the
-     rhythm game moves up instead of sitting below empty card space. */
-  .compact-training-page .training-assessment-layout.rhythm-expanded {
-    grid-template-rows: auto minmax(0, 1fr);
+  /* The training page is a column exactly one viewport tall, so the
+     workspace can be capped at the space left under the header and tabs. */
+  .training-shell {
+    height: 100dvh;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
-  .compact-training-page .rhythm-expanded > .three-column-training > .learning-coach-panel,
-  .compact-training-page .rhythm-expanded > .three-column-training > .placement-score-panel {
+  .training-shell > .topbar { flex: none; }
+  .training-shell > .container.compact-training-page {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 12px;
+  }
+  .compact-training-page > * { flex: none; }
+  .compact-training-page > .training-assessment-layout {
     height: auto;
+    min-height: 0;
   }
-  /* The game sits directly under the cards at its own height. */
-  .compact-training-page .rhythm-expanded > .bottom-rhythm-section { align-self: start; }
+  /* The mannequin panel is size-contained: it stretches to the height of the
+     cards and the game beside it and never pushes the page past the screen. */
+  .compact-training-page .training-assessment-layout > .three-column-training > .visual-panel {
+    height: auto;
+    contain: size;
+  }
+  .compact-training-page .training-assessment-layout > .three-column-training > .learning-coach-panel,
+  .compact-training-page .training-assessment-layout > .three-column-training > .placement-score-panel {
+    height: auto;
+    overflow-y: auto;
+  }
+  /* Expanded: the cards shrink to their content so the game moves up. If the
+     cards and game are taller than the screen, the cards scroll inside. */
+  .compact-training-page > .training-assessment-layout.rhythm-expanded {
+    flex: 0 1 auto;
+    grid-template-rows: minmax(0, auto) auto;
+  }
+  /* Collapsed: the cards fill the screen above the slim reopen bar. */
+  .compact-training-page > .training-assessment-layout.rhythm-collapsed {
+    flex: 1 1 0;
+  }
   /* Lanes, notes and shatter effects scale with the timeline height. */
   .compact-training-page .rhythm-expanded .assessment-timeline {
     height: clamp(100px, calc(100dvh - 720px), 130px);
@@ -881,15 +911,60 @@
   overflow-wrap: anywhere;
 }
 .compact-training-page .learning-coach-panel .placement-inline-copy strong {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.2;
 }
 .compact-training-page .learning-coach-panel .placement-inline-copy > span {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
 }
 .compact-training-page .scoreboard-header .small-label {
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: .04em;
 }
 
+
+/* Accuracy card: larger type and spacing so its content fills the card. */
+.compact-training-page .placement-score-panel { gap: 11px; }
+.compact-training-page .scoreboard-header .small-label { font-size: 11px; }
+.compact-training-page .scoreboard-header > strong { font-size: 18px; }
+.compact-training-page .regional-score { padding: 11px; gap: 8px; }
+.compact-training-page .regional-score-title { font-size: 14px; }
+.compact-training-page .regional-score-title b { font-size: 21px; }
+.compact-training-page .regional-score-track { height: 9px; }
+.compact-training-page .regional-score-meta { font-size: 12px; }
+.compact-training-page .placement-session-progress { padding-top: 9px; gap: 6px; }
+.compact-training-page .placement-session-progress .small-label { font-size: 11px; }
+.compact-training-page .placement-session-progress > div:not(.progress-track) { font-size: 13px; }
+.compact-training-page .placement-session-progress .progress-track { height: 7px; }
+.compact-training-page .scoreboard-footer,
+.compact-training-page .scoreboard-footer .text-button { font-size: 12px; }
+
+/* A larger, easier-to-hit start button for the rhythm game. */
+.compact-training-page .training-assessment-layout .assessment-controls > button {
+  padding: 10px 26px;
+  font-size: 14px;
+}
+
+/* Status box under the instructions: show the whole message, wrapped, rather
+   than clipping it to one line. */
+.compact-training-page .learning-coach-panel .placement-inline { flex: none; }
+.compact-training-page .learning-coach-panel .placement-inline-copy > span {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+/* CPR rhythm chart: one chest lane filling the timeline. */
+.assessment-note.cpr{background:linear-gradient(105deg,#ff9a8f,#d9574d);border:1px solid #ffd0c9;box-shadow:0 0 17px #ff7b6e55}
+.assessment-shatter.cpr i{background:linear-gradient(130deg,#ffd9d3,#e0675c)}
+.assessment-shatter.cpr .assessment-shatter-flash{background:rgba(255,214,206,.9);box-shadow:0 0 23px 9px rgba(255,123,110,.6)}
+.assessment-panel.cpr .assessment-lane { height: calc(100% - 24px); }
+.assessment-panel.cpr .assessment-note { top: 18%; height: 64%; }
+.assessment-panel.cpr .assessment-shatter { top: calc((100% - 24px) * .18); height: calc((100% - 24px) * .64); }
+.compact-training-page .rhythm-expanded .assessment-panel.cpr .assessment-shatter { top: calc((100% - 22px) * .18); height: calc((100% - 22px) * .64); }
+
+/* A press in progress lights its bar up; it shatters on release as before. */
+.assessment-note.held{filter:brightness(1.35) saturate(1.15);box-shadow:0 0 0 2px #fff,0 0 22px 6px #b9ffe0cc;transition:none}
+.assessment-note.front.held{box-shadow:0 0 0 2px #fff,0 0 22px 6px #ffd98fcc}
+.assessment-note.cpr.held{box-shadow:0 0 0 2px #fff,0 0 22px 6px #ffb3abcc}

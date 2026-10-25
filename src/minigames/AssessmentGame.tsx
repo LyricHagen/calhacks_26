@@ -3,20 +3,25 @@ import type { NineReadings } from '../trainerLab/sensors';
 import { estimatePlacement, SPATIAL_SETTINGS, type SpatialSamples } from '../trainerLab/spatialModel';
 import {
   ASSESSMENT_SETTINGS, AssessmentContactDetector, assessmentAccuracy, expireAssessmentNotes,
-  isAssessmentDone, judgeAssessmentContact, newAssessment, nextAssessmentRegion,
-  type AssessmentRegion, type AssessmentState,
+  isAssessmentDone, judgeAssessmentContact, newAssessment, nextAssessmentRegion, noteLabel, windowsFor,
+  type AssessmentMode, type AssessmentNote, type AssessmentRegion, type AssessmentState, type ContactRegion,
 } from './assessmentEngine';
 import './assessment.css';
 
 type ShatterEffect = {
   id: number;
-  region: AssessmentRegion;
+  region: ContactRegion;
   leftPct: number;
   widthPct: number;
   createdAt: number;
 };
 const isSuccessful = (verdict: string | undefined) =>
   verdict === 'perfect' || verdict === 'good' || verdict === 'okay';
+// Bars sit 14% in from the left at the hit line and cross 86% of the lane in travelMs.
+const noteLeftPct = (note: AssessmentNote, atElapsed: number) =>
+  14 + (note.atMs - atElapsed) * 86 / ASSESSMENT_SETTINGS.travelMs;
+const noteWidthPct = (note: AssessmentNote) =>
+  Math.max(17, note.targetDurationMs * 86 / ASSESSMENT_SETTINGS.travelMs);
 
 type FrameInput = (readings: NineReadings, receivedAtMs: number) => void;
 type Props = {
@@ -27,14 +32,18 @@ type Props = {
   onRegionChange: (region: AssessmentRegion) => void;
   onActiveChange: (active: boolean) => void;
   enabled: boolean;
+  /** Fixed for the component's lifetime; remount with a key to switch charts. */
+  mode: AssessmentMode;
   onPlacementScore: (region: AssessmentRegion, score: number) => void;
 };
 
-export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, onRegionChange, onActiveChange, onPlacementScore, enabled }: Props) {
+export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, onRegionChange, onActiveChange, onPlacementScore, enabled, mode }: Props) {
   const [status, setStatus] = useState<'ready' | 'running' | 'complete'>('ready');
-  const [state, setState] = useState<AssessmentState>(newAssessment);
+  const [state, setState] = useState<AssessmentState>(() => newAssessment(mode));
   const [elapsed, setElapsed] = useState(0);
   const [heldMs, setHeldMs] = useState<number | null>(null);
+  // Game time the current contact began, so its bar can light up on press.
+  const [heldOnset, setHeldOnset] = useState<number | null>(null);
   const [shatters, setShatters] = useState<ShatterEffect[]>([]);
   const latencyMs = 35; // Internal serial compensation, not an in-game option.
 
@@ -69,8 +78,8 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
       setShatters(existing => [...existing, ...newHits.map(note => ({
         id: note.id,
         region: note.region,
-        leftPct: 14 + (note.atMs - currentElapsed) * 86 / ASSESSMENT_SETTINGS.travelMs,
-        widthPct: Math.max(12, note.targetDurationMs * 86 / ASSESSMENT_SETTINGS.travelMs),
+        leftPct: noteLeftPct(note, currentElapsed),
+        widthPct: noteWidthPct(note),
         createdAt,
       }))]);
     }
@@ -109,6 +118,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
       const event = detectorRef.current.process(values, baseline, threshold, atMs);
       const heldStart = detectorRef.current.heldStart;
       setHeldMs(heldStart === null ? null : Math.max(0, atMs - heldStart));
+      setHeldOnset(heldStart === null ? null : heldStart - startedAtRef.current - latencyMs);
       if (!event) return;
       const region = event.region;
       const spatial = region === 'front' || region === 'back'
@@ -144,7 +154,8 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
       for (const note of stateRef.current.notes) {
         if (ms >= note.atMs && ms < note.atMs + 100 && !playedRef.current.has(note.id)) {
           playedRef.current.add(note.id);
-          beep(note.id === 0 || note.id === 5 ? 660 : 460, .045);
+          const accent = mode === 'cpr' ? note.id % 10 === 0 : note.id === 0 || note.id === 5;
+          beep(accent ? 660 : 460, .045);
         }
       }
       if (isAssessmentDone(stateRef.current)) {
@@ -156,7 +167,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     };
     request = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(request);
-  }, [status, update]);
+  }, [status, update, mode]);
 
   // Remove particles after their one-shot animation finishes.
   useEffect(() => {
@@ -179,14 +190,15 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     if (!enabled) return;
     detectorRef.current.reset();
     setHeldMs(null);
+    setHeldOnset(null);
     setShatters([]);
-    const fresh = newAssessment();
+    const fresh = newAssessment(mode);
     stateRef.current = fresh;
     setState(fresh);
     startedAtRef.current = performance.now();
     playedRef.current.clear();
-    previousRegionRef.current = 'back';
-    regionCallbackRef.current('back');
+    previousRegionRef.current = nextAssessmentRegion(fresh);
+    regionCallbackRef.current(previousRegionRef.current);
     setElapsed(0);
     runningRef.current = true;
     activeCallbackRef.current(true);
@@ -202,14 +214,15 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     runningRef.current = false;
     detectorRef.current.reset();
     setHeldMs(null);
+    setHeldOnset(null);
     setShatters([]);
     setStatus('ready');
     setElapsed(0);
-    const fresh = newAssessment();
+    const fresh = newAssessment(mode);
     stateRef.current = fresh;
     setState(fresh);
-    previousRegionRef.current = 'back';
-    regionCallbackRef.current('back');
+    previousRegionRef.current = nextAssessmentRegion(fresh);
+    regionCallbackRef.current(previousRegionRef.current);
   }
 
   useEffect(() => {
@@ -223,6 +236,8 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
 
   const pending = state.notes.find(note => !note.verdict);
   const region = pending?.region ?? 'front';
+  const total = state.notes.length;
+  const actionName = region === 'cpr' ? 'compression' : region === 'back' ? 'back blow' : 'abdominal thrust';
   const scorePct = assessmentAccuracy(state);
   const correct = state.notes.filter(note => ['perfect', 'good', 'okay'].includes(note.verdict ?? '')).length;
   const judged = state.notes.filter(note => note.verdict).length;
@@ -234,12 +249,31 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     state.notes.every(note => note.region === 'front' || note.verdict) &&
     firstThrust.atMs - elapsed > ASSESSMENT_SETTINGS.switchBannerLeadMs;
 
-  return <article className="assessment-panel" aria-label="Heimlich rhythm assessment">
+  // The pending bar nearest a contact in progress lights up until release.
+  const heldNote = heldOnset === null ? undefined : state.notes
+    .filter(note => !note.verdict && Math.abs(note.atMs - heldOnset) <= windowsFor(note.region).hitWindowMs)
+    .sort((a, b) => Math.abs(a.atMs - heldOnset) - Math.abs(b.atMs - heldOnset))[0];
+  const renderNote = (note: AssessmentNote) => {
+    const left = noteLeftPct(note, elapsed);
+    const width = noteWidthPct(note);
+    return left < -35 || left > 120 ? null : <div key={note.id}
+      className={`assessment-note ${note.region} ${note.verdict ? `judged ${note.verdict}` : ''} ${note.id === heldNote?.id ? 'held' : ''}`}
+      style={{ '--note-x': `${left}%`, '--note-width': `${width}%` } as CSSProperties}>
+      <b>{note.region === 'front' ? note.id - 4 : note.id + 1}</b>
+      <span className="assessment-hold-strip" />
+    </div>;
+  };
+  const lane = (laneRegion: ContactRegion, name: string) => <div className={`assessment-lane assessment-${laneRegion}-lane`}>
+    <div className="assessment-lane-name">{name}</div>
+    {state.notes.filter(note => note.region === laneRegion && !isSuccessful(note.verdict)).map(renderNote)}
+  </div>;
+
+  return <article className={`assessment-panel ${mode}`} aria-label={mode === 'cpr' ? 'CPR compression rhythm assessment' : 'Heimlich rhythm assessment'}>
     <div className="assessment-heading">
-      <div><span className="small-label">PRACTICAL ASSESSMENT</span><h2>Rhythm skill check</h2><p>Match each back blow and abdominal thrust to the moving bars.</p></div>
-      <span className="assessment-mode-tag">5 BACK + 5 ABDOMEN</span>
+      <div><h2>Rhythm skill check</h2><p>{mode === 'cpr' ? 'Match each chest compression to the moving bars.' : 'Match each back blow and abdominal thrust to the moving bars.'}</p></div>
+      <span className="assessment-mode-tag">{mode === 'cpr' ? '30 COMPRESSIONS' : '5 BACK + 5 ABDOMEN'}</span>
     </div>
-    {!enabled && <p className="assessment-availability">The rhythm skill check assesses the responsive-adult choking sequence. Select Severe choking to begin.</p>}
+    {!enabled && <p className="assessment-availability">The rhythm skill check covers severe choking and CPR. Select Severe choking or Unresponsive / CPR to begin.</p>}
     <div className="assessment-stats">
       <div><small>SCORE</small><strong>{state.score.toLocaleString()}</strong></div>
       <div><small>COMBO</small><strong>{state.combo}<span>×</span></strong></div>
@@ -248,8 +282,8 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     <div className="assessment-stage">
       <div className="assessment-stage-top">
         <span className="assessment-live-dot" />
-        <span>{status === 'ready' ? 'READY TO BEGIN' : status === 'complete' ? 'SET COMPLETE' : region === 'back' ? 'BACK BLOWS' : 'ABDOMINAL THRUSTS'}</span>
-        <strong>{judged} / 10</strong>
+        <span>{status === 'ready' ? 'READY TO BEGIN' : status === 'complete' ? 'SET COMPLETE' : region === 'cpr' ? 'CHEST COMPRESSIONS' : region === 'back' ? 'BACK BLOWS' : 'ABDOMINAL THRUSTS'}</span>
+        <strong>{judged} / {total}</strong>
       </div>
       <div className="assessment-timeline" aria-label="Moving note bars for back blows and abdominal thrusts">
         <div className="assessment-hit-line"><span>HIT</span></div>
@@ -266,32 +300,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
             '--delay': `${(index % 4) * 14}ms`,
           } as CSSProperties} />)}
         </div>)}
-        <div className="assessment-lane assessment-back-lane">
-          <div className="assessment-lane-name">BACK</div>
-          {state.notes.filter(note => note.region === 'back' && !isSuccessful(note.verdict)).map(note => {
-            const left = 14 + (note.atMs - elapsed) * 86 / ASSESSMENT_SETTINGS.travelMs;
-            const width = Math.max(12, note.targetDurationMs * 86 / ASSESSMENT_SETTINGS.travelMs);
-            return left < -35 || left > 120 ? null : <div key={note.id}
-              className={`assessment-note back ${note.verdict ? `judged ${note.verdict}` : ''}`}
-              style={{ '--note-x': `${left}%`, '--note-width': `${width}%` } as CSSProperties}>
-              <b>{note.id + 1}</b>
-              <span className="assessment-hold-strip" />
-            </div>;
-          })}
-        </div>
-        <div className="assessment-lane assessment-front-lane">
-          <div className="assessment-lane-name">ABDOMEN</div>
-          {state.notes.filter(note => note.region === 'front' && !isSuccessful(note.verdict)).map(note => {
-            const left = 14 + (note.atMs - elapsed) * 86 / ASSESSMENT_SETTINGS.travelMs;
-            const width = Math.max(12, note.targetDurationMs * 86 / ASSESSMENT_SETTINGS.travelMs);
-            return left < -35 || left > 120 ? null : <div key={note.id}
-              className={`assessment-note front ${note.verdict ? `judged ${note.verdict}` : ''}`}
-              style={{ '--note-x': `${left}%`, '--note-width': `${width}%` } as CSSProperties}>
-              <b>{note.id - 4}</b>
-              <span className="assessment-hold-strip" />
-            </div>;
-          })}
-        </div>
+        {mode === 'cpr' ? lane('cpr', 'CHEST') : <>{lane('back', 'BACK')}{lane('front', 'ABDOMEN')}</>}
         <div className="assessment-timeline-bottom"><span>CONTACT</span><span>↑ Start when bar meets HIT</span></div>
         {switching && firstThrust && <div className="assessment-switch" role="status" aria-live="polite">
           <strong>Moving to abdominal thrusts</strong>
@@ -300,12 +309,12 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
       </div>
       <div className={`assessment-verdict ${outcome}`} key={state.feedbackId} role="status" aria-live="polite">
         <strong>{status === 'complete' ? 'FINISHED!' : state.feedback}</strong>
-        <span>{status === 'running' && pending ? `${Math.max(0, beatRemaining).toFixed(1)} s until next ${region === 'back' ? 'back blow' : 'abdominal thrust'} · ${state.feedbackDetail}` : state.feedbackDetail}</span>
+        <span>{status === 'running' && pending ? `${Math.max(0, beatRemaining).toFixed(1)} s until next ${actionName} · ${state.feedbackDetail}` : state.feedbackDetail}</span>
       </div>
     </div>
     <div className="assessment-pacing">
-      <div className="assessment-progress-cells">{state.notes.map(note => <span key={note.id} className={note.verdict ? note.verdict : 'upcoming'} title={`${note.id < 5 ? 'Back blow' : 'Abdominal thrust'} ${note.id < 5 ? note.id + 1 : note.id - 4}: ${note.verdict ?? 'upcoming'}`} />)}</div>
-      <div className="assessment-next-action"><span>NEXT ACTION</span><strong>{pending ? `${region === 'back' ? 'Back blow' : 'Abdominal thrust'} ${pending.id < 5 ? pending.id + 1 : pending.id - 4} of 5` : 'Assessment complete'}</strong></div>
+      <div className="assessment-progress-cells">{state.notes.map(note => <span key={note.id} className={note.verdict ? note.verdict : 'upcoming'} title={`${noteLabel(note)}: ${note.verdict ?? 'upcoming'}`} />)}</div>
+      <div className="assessment-next-action"><span>NEXT ACTION</span><strong>{pending ? `${noteLabel(pending)} of ${pending.region === 'cpr' ? total : 5}` : 'Assessment complete'}</strong></div>
       <div className="assessment-contact-duration">
         <div><span>{heldMs === null ? 'Waiting for a pulse' : `Contact: ${Math.round(heldMs)} ms`}</span><strong>{pending ? `Game target: ${pending.targetDurationMs} ms` : 'Complete'}</strong></div>
         <div className="assessment-duration-track"><i style={{ width: `${pending && heldMs !== null ? Math.min(100, (heldMs / pending.targetDurationMs) * 100) : 0}%` }} /></div>
@@ -313,13 +322,13 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
 
     </div>
     {status === 'complete' && <div className="assessment-result">
-      <strong>{correct} of 10 actions passed</strong>
+      <strong>{correct} of {total} actions passed</strong>
       <span>Best combo: {state.maxCombo} · Placement and contact timing assessed from FSR readings; this does not measure clinical effectiveness.</span>
     </div>}
     <div className="assessment-controls">
       {status === 'running'
         ? <button type="button" className="button-outline" onClick={stop}>End test</button>
-        : <button type="button" className="button-primary" onClick={start} disabled={!enabled}>{!enabled ? 'Select severe choking to play' : status === 'complete' ? 'Try again ↻' : 'Start assessment →'}</button>}
+        : <button type="button" className="button-primary" onClick={start} disabled={!enabled}>{!enabled ? 'Not available in this scenario' : status === 'complete' ? 'Try again ↻' : 'Start assessment →'}</button>}
     </div>
   </article>;
 }

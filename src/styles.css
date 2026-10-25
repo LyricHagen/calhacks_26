@@ -49,9 +49,9 @@ a {
 }
 
 .container {
-  max-width: 1460px;
+  max-width: 1640px;
   margin: 0 auto;
-  padding: 0 42px;
+  padding: 0 24px;
 }
 
 .topbar {
@@ -61,7 +61,7 @@ a {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px max(42px,calc((100vw - 1376px)/2));
+  padding: 14px max(24px,calc((100vw - 1592px)/2));
   gap: 20px;
 }
 
@@ -225,6 +225,7 @@ a {
 }
 
 .modebar {
+  margin-top: 26px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -235,17 +236,17 @@ a {
 .mode-tabs {
   display: flex;
   align-items: center;
-  gap: 25px;
+  gap: 36px;
 }
 
 .mode-tabs button {
   border: 0;
   border-bottom: 3px solid transparent;
   color: #8c9f98;
-  padding: 0 2px 16px;
+  padding: 0 2px 15px;
   background: none;
   font-weight: 800;
-  font-size: 12px;
+  font-size: 16px;
 }
 
 .mode-tabs button:hover {
@@ -1501,7 +1502,7 @@ a {
     gap: 13px;
   }
   .mode-tabs button {
-    font-size: 11px;
+    font-size: 14px;
   }
   .mode-status {
     display: none;
