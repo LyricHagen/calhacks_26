@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ADC_MAX, EMPTY, NineSensorDetector, NineSensorProtocol,
+  ADC_MAX, EMPTY, formatForce, isSaturated, padNewtons, NineSensorDetector, NineSensorProtocol,
   SENSOR_NAMES, type ActionType, type DetectedAction, type NineFrame, type NineReadings,
   type SensorId,
 } from './trainerLab/sensors';
@@ -251,9 +251,9 @@ function Airway({ scenario }: { scenario: Scenario }) {
   </div>;
 }
 
-function SensorMeter({ value, baseline, threshold }: { value: number; baseline: number; threshold: number }) {
+function SensorMeter({ id, value, baseline, threshold }: { id: SensorId; value: number; baseline: number; threshold: number }) {
   const corrected = Math.max(0, value - baseline);
-  return <div className="meter" title={`${value} raw ADC, ${corrected} above baseline`}>
+  return <div className="meter" title={`${value} raw ADC (≈${formatForce(padNewtons(id, value, baseline), isSaturated(value))}), ${corrected} above baseline`}>
     <span style={{ width: `${Math.min(100, corrected / ADC_MAX * 100)}%` }} className={corrected >= threshold ? 'meter-fill active' : 'meter-fill'} />
     <span className="meter-line" style={{ left: `${threshold / ADC_MAX * 100}%` }} />
   </div>;
@@ -1072,10 +1072,10 @@ export function TrainerExperience() {
           </div>
         </section>
         {advanced && <section className="raw-panel">
-          <h3>Live sensor values <span>0–4095 ADC</span></h3>
+          <h3>Live sensor values <span>0–4095 ADC · ≈ applied force</span></h3>
           <div className="raw-grid">{SENSOR_NAMES.map((name, i) => <div key={name} className="raw-item">
             <div>
-              <span>{name}</span><b>{readings[i]}</b></div><SensorMeter value={readings[i]} baseline={baseline[i]} threshold={threshold} /></div>)}</div></section>}
+              <span>{name}</span><b>{readings[i]} <small>≈{formatForce(padNewtons(i as SensorId, readings[i], baseline[i]), isSaturated(readings[i]))}</small></b></div><SensorMeter id={i as SensorId} value={readings[i]} baseline={baseline[i]} threshold={threshold} /></div>)}</div></section>}
         <section className="summary-bar">
           <div>
             <span className="section-kicker">SESSION SNAPSHOT</span>
@@ -1173,7 +1173,7 @@ export function TrainerExperience() {
               <div className="sensor-row-main">
                 <div>
                   <strong>{SENSOR_NAMES[id]}</strong>
-                  <span>{readings[id]} live · {peaks[id]} peak</span></div><SensorMeter value={readings[id]} baseline={baseline[id]} threshold={threshold} /></div>
+                  <span>{readings[id]} live (≈{formatForce(padNewtons(id, readings[id], baseline[id]), isSaturated(readings[id]))}) · {peaks[id]} peak (≈{formatForce(padNewtons(id, peaks[id], baseline[id]), isSaturated(peaks[id]))})</span></div><SensorMeter id={id} value={readings[id]} baseline={baseline[id]} threshold={threshold} /></div>
               <button type="button" disabled={simBusy || connection === 'live'} className="mini-test-btn" onClick={() => simulate([id])}>Test</button></div>)}</div>)}
           </div>
           <div className="tip-line">{connection === 'live' ? 'Reading live ESP32 input.' : 'Demo mode: test buttons generate synthetic ADC press-and-release frames.'} {framesReceived} frames processed. {connectionDetail}</div></div></section>}

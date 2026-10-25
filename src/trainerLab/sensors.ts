@@ -79,6 +79,77 @@ export function clampADC(value: number): number {
   return Math.max(0, Math.min(ADC_MAX, Math.round(value)));
 }
 
+// Each pad is wired 3.3 V -> FSR -> ADC pin -> 2.2 kΩ -> GND, so
+// V = 3.3 · 2.2 / (2.2 + R_fsr) and R_fsr = 2.2 · (4095 / adc - 1) kΩ.
+const DIVIDER_KOHM = 2.2;
+
+// Power-law fit to the FSR 402 datasheet curve (R ≈ 156 kΩ · F^-0.70, F in
+// grams). Good from ~50 g to 10 kg; below ~20 g the FSR is effectively open.
+const FIT_KOHM = 156;
+const FIT_EXPONENT = 0.7;
+const MIN_GRAMS = 20;
+const MAX_GRAMS = 10000;
+
+export function adcToKohm(adc: number): number {
+  const value = clampADC(adc);
+  if (value <= 0) {
+    return Infinity;
+  }
+
+  return DIVIDER_KOHM * (ADC_MAX / value - 1);
+}
+
+// Approximate force on one pad, in grams. 0 when below the FSR's turn-on.
+export function adcToGrams(adc: number): number {
+  const kohm = adcToKohm(adc);
+  if (!Number.isFinite(kohm)) {
+    return 0;
+  }
+
+  const grams = kohm <= 0 ? MAX_GRAMS : (FIT_KOHM / kohm) ** (1 / FIT_EXPONENT);
+  return grams < MIN_GRAMS ? 0 : Math.min(MAX_GRAMS, grams);
+}
+
+const STANDARD_GRAVITY = 9.80665;
+
+export function gramsToNewtons(grams: number): number {
+  return grams / 1000 * STANDARD_GRAVITY;
+}
+
+export function adcToNewtons(adc: number): number {
+  return gramsToNewtons(adcToGrams(adc));
+}
+
+// Per-pad correction, in SensorId order: true N ÷ displayed N, measured by
+// resting a known weight in the centre of each plate. Accounts for load the
+// plate's mounting carries instead of the FSR, and part-to-part FSR spread.
+export const PAD_SCALE: NineReadings = [1, 1, 1, 1, 1, 1, 1, 1, 1];
+
+// True once the FSR is past the end of the datasheet curve, so the force
+// shown is a lower bound.
+export function isSaturated(adc: number): boolean {
+  return adcToGrams(adc) >= MAX_GRAMS;
+}
+
+// Force applied to a pad's plate, in newtons: the FSR's force above what it
+// carries at rest (plate weight, mounting preload), times the pad's scale.
+export function padNewtons(id: SensorId, adc: number, baselineAdc: number): number {
+  const applied = adcToNewtons(adc) - adcToNewtons(baselineAdc);
+  return Math.max(0, applied) * PAD_SCALE[id];
+}
+
+export function formatForce(newtons: number, saturated = false): string {
+  if (newtons <= 0) {
+    return '0 N';
+  }
+
+  if (saturated) {
+    return `${Math.round(newtons)}+ N`;
+  }
+
+  return newtons < 10 ? `${newtons.toFixed(1)} N` : `${Math.round(newtons)} N`;
+}
+
 function isRawArray(value: unknown): value is NineReadings {
   return (
     Array.isArray(value) &&
