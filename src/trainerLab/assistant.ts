@@ -30,7 +30,9 @@ Your answer is read aloud while their hands are busy, so:
 - The sensors only detect contact location and timing. They cannot measure force, compression depth, or whether an airway cleared, so never claim they do.
 - Do not contradict the sensor feedback in the state below; explain it instead.
 - This is training only. If someone describes a real emergency, tell them to call emergency services now.
-- If the question is unrelated to first aid or this trainer, say briefly that you can only help with the training.
+- Questions come from speech recognition, so expect vague, rambling, or misheard wording ("what should I do", "what in your opinion is the best way to go about a heimlich maneavour"). Assume anything that could plausibly be about choking, the Heimlich manoeuvre, CPR, or this trainer is, work out the most likely meaning, and answer it using the current step in the trainer state. Never ask them to rephrase.
+- A bare "what should I do" or "what now" means: tell them the next action for the current step.
+- Only if a question is clearly unrelated (weather, homework, other topics), say briefly that you can only help with the training.
 - Never say the word "Gemini": it is the wake word, and saying it would trigger the microphone.`;
 
 export type AssistantContext = {
