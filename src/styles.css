@@ -171,13 +171,6 @@ a {
   gap: 9px;
 }
 
-.eyebrow-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #13c68e;
-}
-
 .page-intro h1 {
   font-family: Manrope,system-ui,sans-serif;
   font-size: clamp(31px,3vw,43px);
@@ -386,13 +379,6 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.step-tag-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #1bb98c;
 }
 
 .instruction-panel h2 {
@@ -621,14 +607,6 @@ a {
   font-weight: 700;
   margin-top: -5px;
   margin-bottom: 5px;
-}
-
-.legend-dot {
-  height: 9px;
-  width: 9px;
-  border-radius: 50%;
-  background: #05b78d;
-  box-shadow: 0 0 0 4px #d5f6e9;
 }
 
 .coach-panel {

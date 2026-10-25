@@ -890,7 +890,7 @@ export function TrainerExperience() {
       <div className="page-intro">
         <div>
           <div className="eyebrow">
-            <span className="eyebrow-dot" /> INTERACTIVE TRAINING STATION</div>
+            INTERACTIVE TRAINING STATION</div>
           <h1>Learn by doing. <span>Improve as you go.</span></h1>
           <p>Follow one clear instruction, practise on the mannequin, and receive instant placement feedback.</p></div>
         <div className="intro-note">
@@ -929,7 +929,7 @@ export function TrainerExperience() {
               <span className="instruction-step">YOUR NEXT ACTION</span>
               <span className="round-label">{scenario === 'severe' ? `ROUND ${counts.rounds + 1}` : 'PRACTICE'}</span></div>
             <span className="step-tag">
-              <span className="step-tag-dot" />{promptTag}</span>
+              {promptTag}</span>
             <h2>{instruction}</h2>
             <ol className="step-list">
               {howTo.steps.map(step => <li key={step}>{step}</li>)}
@@ -972,7 +972,7 @@ export function TrainerExperience() {
             <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap}
               severity={scenario === 'cough' ? 1 : scenario === 'severe' ? 2 : 3} />
             <div className="mannequin-guide">
-              <span className="legend-dot" /> Smoothed contact estimate from nearby FSR readings; areas between sensors are inferred, not measured. Back left/right are from the back-facing view.</div>
+              Smoothed contact estimate from nearby FSR readings; areas between sensors are inferred, not measured. Back left/right are from the back-facing view.</div>
           </article>
           <article className="coach-panel">
             <div className="coach-title">
