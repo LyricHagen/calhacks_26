@@ -842,7 +842,60 @@ a {
   stroke-width: 16;
   stroke-linecap: round;
   stroke-dasharray: 24 30;
-  animation: airflow 1s linear infinite;
+  animation: airflow 1s linear infinite,coughBursts 2.4s ease-in-out infinite;
+}
+
+.airway-object {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform .25s ease;
+}
+
+.airway-pressing .airway-object {
+  transform: translateY(-6px);
+}
+
+.airway-hit .airway-object {
+  animation: airwayBump .7s ease-out .25s both;
+}
+
+.air-puff {
+  fill: none;
+  stroke: #0fc49c;
+  stroke-width: 14;
+  stroke-linecap: round;
+  stroke-dasharray: 24 30;
+  animation: airflow .45s linear 2,airPuff .7s ease-out both;
+}
+
+@keyframes coughBursts {
+  0%,100% { opacity: .25; }
+  10%,20% { opacity: 1; }
+  27% { opacity: .35; }
+  35%,45% { opacity: 1; }
+  60% { opacity: .25; }
+}
+
+@keyframes airPuff {
+  0% { opacity: 0; }
+  20%,60% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes airwayBump {
+  0% { transform: none; }
+  35% { transform: translateY(-22px); }
+  70% { transform: translateY(-4px); }
+  100% { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .air-stream,.air-puff,.airway-hit .airway-object {
+    animation: none;
+  }
+  .airway-object {
+    transition: none;
+  }
 }
 
 .action-strip {

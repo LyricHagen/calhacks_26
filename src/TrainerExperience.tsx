@@ -202,12 +202,23 @@ function BodyDiagram({
   </div>;
 }
 
+type AirwayMotion = 'idle' | 'pressing' | 'hit' | 'miss';
+
+const AIRWAY_STATUS: Record<AirwayMotion, string> = {
+  idle: 'Blocked',
+  pressing: 'Pressure building',
+  hit: 'Air pushed upward',
+  miss: 'Off target, no effect',
+};
+
 // Side profile traced from a head-and-throat reference: nasal cavity and pharynx in pink,
 // trachea in darker red in front of the oesophagus. Cough shows air moving up and out of
-// the mouth; the other scenarios show a lodged object at the top of the trachea.
-function Airway({ scenario }: { scenario: Scenario }) {
+// the mouth in bursts; the other scenarios show a lodged object at the top of the trachea.
+// A held correct contact eases the object up; a registered one sends a puff of air up the
+// trachea that bumps it (pulse replays the bump). It never clears: sensors can't tell.
+function Airway({ scenario, motion, pulse }: { scenario: Scenario; motion: AirwayMotion; pulse: number }) {
   const open = scenario === 'cough';
-  return <div className="airway-mini" aria-label={open ? 'Airflow illustrated through a partly open airway' : 'Illustrated airway blocked by an object'} role="img">
+  return <div className={`airway-mini airway-${motion}`} aria-label={open ? 'Airflow illustrated through a partly open airway' : 'Illustrated airway blocked by an object'} role="img">
     <svg viewBox="60 30 400 555" aria-hidden="true">
       <path d="M160 585C180 560 205 545 205 520V448C180 440 135 442 118 432C102 422 98 400 106 382C98 372 96 360 104 352C94 345 92 333 98 322C84 316 66 306 72 294C86 270 102 246 108 218C110 180 130 112 190 70C240 36 330 34 390 78C440 118 452 200 440 270C430 320 400 350 380 372C372 420 378 500 392 585Z" fill={SKIN} stroke={SKIN_LINE} strokeWidth="5" strokeLinejoin="round" />
       <path d="M86 300C100 262 132 230 172 228C204 226 220 258 250 270C272 280 282 300 282 330L290 585H262L258 470C254 440 246 420 248 395C250 360 240 322 222 306Z" fill="#eea39c" />
@@ -215,7 +226,10 @@ function Airway({ scenario }: { scenario: Scenario }) {
       <path d="M250 410C262 418 262 440 258 470L262 585H232C220 560 212 520 218 490C224 455 236 424 250 410Z" fill="#dc7b72" />
       {open
         ? <path d="M244 570C236 520 232 470 242 420C252 384 246 350 216 346L100 346" className="air-stream" />
-        : <circle cx="242" cy="446" r="17" fill="#e8a33d" stroke="#b76539" strokeWidth="5" />}
+        : <g key={motion === 'hit' ? pulse : 'still'}>
+          {motion === 'hit' && <path d="M246 570C242 540 240 505 242 470" className="air-puff" />}
+          <g className="airway-object"><circle cx="242" cy="446" r="17" fill="#e8a33d" stroke="#b76539" strokeWidth="5" /></g>
+        </g>}
     </svg>
   </div>;
 }
@@ -906,6 +920,10 @@ export function TrainerExperience() {
 
   const diagramSensor = active ?? recentContact?.sensor ?? null;
   const diagramWrong = active !== null ? activeWrong : recentContact ? !recentContact.correct : false;
+  // Only the back-blow/thrust scenario acts on the obstruction; CPR placement leaves it still.
+  const airwayMotion: AirwayMotion = scenario !== 'severe' ? 'idle'
+    : active !== null ? (activeWrong ? 'idle' : 'pressing')
+      : recentContact ? (recentContact.correct ? 'hit' : 'miss') : 'idle';
 
   return <div className="site-shell">
     <header className="topbar">
@@ -1064,9 +1082,10 @@ export function TrainerExperience() {
             <div className="airway-row">
               <div className="airway-copy">
                 <span className="readout-label">AIRWAY · ILLUSTRATION</span>
-                <strong className={scenario === 'cough' ? 'airway-status open' : 'airway-status blocked'}>{scenario === 'cough' ? 'Partly blocked, air moving' : 'Blocked'}</strong>
+                <strong className={`airway-status ${scenario === 'cough' || airwayMotion === 'pressing' || airwayMotion === 'hit' ? 'open' : 'blocked'}`}>
+                  {scenario === 'cough' ? 'Partly blocked, air moving' : AIRWAY_STATUS[airwayMotion]}</strong>
                 <span>{scenario === 'cough' ? 'A strong cough can move air and may clear the obstruction.' : 'Sensor signals cannot detect whether the airway has cleared.'}</span></div>
-              <Airway scenario={scenario} /></div>
+              <Airway scenario={scenario} motion={airwayMotion} pulse={flash} /></div>
           </article>
         </section>
         <section className="action-strip">
