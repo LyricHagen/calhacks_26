@@ -1269,33 +1269,30 @@ export function TrainerExperience() {
       <div className="brand"><Logo />
         <div>
           <strong>Thrustworthy</strong></div></div>
+      <div className="mode-tabs" role="tablist" aria-label="Training tools">
+        <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('train'); }}>Practice</button>
+        <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('calibrate'); }}>Calibrate</button>
+        <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('test'); }}>Sensor test</button>
+      </div>
+      {mode === 'train' && <div className="mode-scenarios" role="group" aria-label="Scenario">
+        <span className="mode-scenarios-label">Scenario</span>
+        <div className="scenario-buttons">
+          <button type="button" aria-pressed={scenario === 'severe'} className={scenario === 'severe' ? 'selected' : ''} onClick={() => resetSession('severe')}>Severe choking</button>
+          <button type="button" aria-pressed={scenario === 'cough'} className={scenario === 'cough' ? 'selected' : ''} onClick={() => resetSession('cough')}>Effective cough</button>
+          <button type="button" aria-pressed={scenario === 'unresponsive'} className={scenario === 'unresponsive' ? 'selected' : ''} onClick={() => resetSession('unresponsive')}>Unresponsive / CPR</button>
+        </div>
+        <button type="button" className="quiet-button" onClick={() => resetSession()} aria-label="Reset" title="Reset"><Refresh /><span className="reset-label">Reset</span></button>
+      </div>}
       <div className="top-actions">
-        {speechSupported() && <button type="button" className="connect-button" onClick={toggleVoice} aria-pressed={voiceOn} title="Speak feedback aloud"><Speaker on={voiceOn} />{voiceOn ? 'Voice on' : 'Voice off'}</button>}
-        <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
+        {speechSupported() && <button type="button" className="connect-button voice-button" onClick={toggleVoice} aria-pressed={voiceOn} aria-label={voiceOn ? 'Voice on' : 'Voice off'} title="Speak feedback aloud"><Speaker on={voiceOn} /><span className="voice-label">{voiceOn ? 'Voice on' : 'Voice off'}</span></button>}
+        {connection !== 'demo' && <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : 'Connection issue'}</span>}
         <button type="button" className="connect-button" onClick={() => { void reconnect(); }}><Usb />{paired ? 'Reconnect' : 'Connect sensor'}</button>
       </div>
     </header>
     <main className={mode === 'train' ? 'container compact-training-page' : 'container'}>
-      <div className="modebar" aria-label="Trainer modes">
-        <div className="mode-tabs" role="tablist" aria-label="Training tools">
-          <button type="button" role="tab" aria-selected={mode === 'train'} className={mode === 'train' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('train'); }}>Practice</button>
-          <button type="button" role="tab" aria-selected={mode === 'calibrate'} className={mode === 'calibrate' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('calibrate'); }}>Calibrate</button>
-          <button type="button" role="tab" aria-selected={mode === 'test'} className={mode === 'test' ? 'selected' : ''} onClick={() => { detector.current.reset(); setRecentPattern(null); setMode('test'); }}>Sensor test</button>
-        </div>
-        <span className="mode-status">{connection === 'live' ? 'LIVE INPUT' : 'SIMULATION MODE'}</span>
-      </div>
-
       {connection === 'error' && <div className="connection-error" role="alert">{connectionDetail}</div>}
 
       {mode === 'train' && <>
-        <div className="scenario-bar">
-          <div className="scenario-buttons">
-            <button type="button" className={scenario === 'severe' ? 'selected' : ''} onClick={() => resetSession('severe')}>Severe choking</button>
-            <button type="button" className={scenario === 'cough' ? 'selected' : ''} onClick={() => resetSession('cough')}>Effective cough</button>
-            <button type="button" className={scenario === 'unresponsive' ? 'selected' : ''} onClick={() => resetSession('unresponsive')}>Unresponsive / CPR</button>
-          </div>
-          <button type="button" className="quiet-button reset" onClick={() => resetSession()}><Refresh /> Reset</button>
-        </div>
         <div className={`training-assessment-layout ${rhythmCollapsed ? 'rhythm-collapsed' : 'rhythm-expanded'}`}>
         <section className="practice-grid with-bottom-assessment three-column-training">
           <article className="visual-panel">
@@ -1384,17 +1381,7 @@ export function TrainerExperience() {
           </article>
         </section>
         <section className="bottom-rhythm-section" aria-label="Rhythm assessment">
-          <button
-            type="button"
-            className="rhythm-disclosure"
-            aria-expanded={!rhythmCollapsed}
-            aria-controls="rhythm-game-content"
-            onClick={() => setRhythmCollapsed(value => !value)}
-          >
-            <span>Rhythm skill check</span>
-            <span className="rhythm-disclosure-action">{rhythmCollapsed ? 'Expand  ▾' : 'Collapse  ▴'}</span>
-          </button>
-          <div id="rhythm-game-content" className="rhythm-game-content" hidden={rhythmCollapsed}>
+          <div className="rhythm-game-content">
           <AssessmentGame
               key={scenario === 'unresponsive' ? 'cpr' : 'choking'}
               mode={scenario === 'unresponsive' ? 'cpr' : 'choking'}
@@ -1406,6 +1393,8 @@ export function TrainerExperience() {
               onActiveChange={onAssessmentActiveChange}
               onPlacementScore={recordAssessmentPlacement}
               onRegionChange={region => { setAssessmentRegion(region); setViewOverride(null); }}
+              collapsed={rhythmCollapsed}
+              onToggleCollapsed={() => setRhythmCollapsed(value => !value)}
             />
           </div>
         </section>

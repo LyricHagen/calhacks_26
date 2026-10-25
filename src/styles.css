@@ -49,20 +49,26 @@ a {
 }
 
 .container {
-  max-width: 1640px;
+  max-width: 1840px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 10px;
 }
 
 .topbar {
-  min-height: 86px;
+  min-height: 90px;
   border-bottom: 1px solid #e4ece7;
   background: #fff;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px max(24px,calc((100vw - 1592px)/2));
-  gap: 20px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  padding: 0 max(10px,calc((100vw - 1820px)/2));
+  column-gap: 20px;
+}
+
+/* Brand, scenario picker and actions centre; the tabs run full height so
+   their underline sits on the navbar's bottom border. */
+.topbar > :not(.mode-tabs) {
+  align-self: center;
 }
 
 .brand {
@@ -72,8 +78,8 @@ a {
 }
 
 .brandmark {
-  height: 43px;
-  width: 43px;
+  height: 50px;
+  width: 50px;
   flex-shrink: 0;
 }
 
@@ -84,7 +90,7 @@ a {
 
 .brand strong {
   font-family: Manrope,sans-serif;
-  font-size: 20px;
+  font-size: 25px;
   letter-spacing: -1.05px;
   display: block;
   line-height: 1.1;
@@ -99,6 +105,7 @@ a {
 }
 
 .top-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -224,29 +231,22 @@ a {
   display: block;
 }
 
-.modebar {
-  margin-top: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid #dce7e1;
-  gap: 12px;
-}
-
 .mode-tabs {
   display: flex;
-  align-items: center;
-  gap: 36px;
+  align-items: stretch;
+  gap: 28px;
+  margin-left: 16px;
 }
 
 .mode-tabs button {
   border: 0;
   border-bottom: 3px solid transparent;
   color: #8c9f98;
-  padding: 0 2px 15px;
+  border-top: 3px solid transparent;
+  padding: 0 2px;
   background: none;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 19px;
 }
 
 .mode-tabs button:hover {
@@ -258,13 +258,85 @@ a {
   color: #116b5e;
 }
 
-.mode-status {
-  letter-spacing: .12em;
-  color: #91aba0;
-  font-size: 9px;
-  font-weight: 900;
-  padding: 0 3px 15px;
+/* Scenario picker shares the tab row; boxed buttons read as choices, not tabs. */
+.mode-scenarios {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
+
+.mode-scenarios-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #8ba59b;
+}
+
+.mode-scenarios .scenario-buttons {
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid #dce7e1;
+  border-radius: 10px;
+  background: #f4f8f6;
+}
+
+.mode-scenarios .scenario-buttons button {
+  padding: 10px 16px;
+  font-size: 16px;
+  border-color: transparent;
+  background: transparent;
+  white-space: nowrap;
+  opacity: 1;
+}
+
+.mode-scenarios .scenario-buttons button.selected {
+  background: #fff;
+  border-color: #aadaca;
+  box-shadow: 0 1px 3px rgba(20,80,60,.12);
+}
+
+.mode-scenarios .quiet-button {
+  padding: 7px 4px;
+  font-size: 15px;
+}
+
+.topbar .connect-button {
+  font-size: 15px;
+  padding: 13px 18px;
+  border-radius: 10px;
+}
+
+.topbar .connect-button svg,
+.mode-scenarios .quiet-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Keep the navbar on one row on laptop widths. */
+@media (max-width: 1520px) {
+  .topbar { column-gap: 14px; }
+  .mode-tabs { gap: 20px; margin-left: 4px; }
+  .mode-scenarios-label { display: none; }
+  .mode-scenarios .scenario-buttons button { padding: 9px 11px; font-size: 15px; }
+  .top-actions { gap: 10px; }
+  .top-actions .voice-button { padding-inline: 13px; }
+  .top-actions .voice-button .voice-label { display: none; }
+}
+
+@media (max-width: 1360px) {
+  .brand strong { font-size: 22px; }
+  .brandmark { height: 44px; width: 44px; }
+  .mode-tabs { gap: 16px; }
+  .mode-tabs button { font-size: 17px; }
+  .mode-scenarios .scenario-buttons button { padding: 8px 10px; font-size: 14px; }
+  .mode-scenarios .reset-label { display: none; }
+  .topbar .connect-button { font-size: 14px; padding: 11px 14px; }
+}
+
 
 .scenario-bar {
   display: flex;
@@ -1479,8 +1551,8 @@ a {
     padding: 0 18px;
   }
   .topbar {
-    padding: 12px 18px;
-    min-height: 75px;
+    padding: 0 18px;
+    min-height: 64px;
   }
   .page-intro {
     padding-top: 28px;
@@ -1503,9 +1575,6 @@ a {
   }
   .mode-tabs button {
     font-size: 14px;
-  }
-  .mode-status {
-    display: none;
   }
   .practice-grid {
     grid-template-columns: 1fr;

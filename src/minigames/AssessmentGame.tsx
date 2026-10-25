@@ -35,9 +35,12 @@ type Props = {
   /** Fixed for the component's lifetime; remount with a key to switch charts. */
   mode: AssessmentMode;
   onPlacementScore: (region: AssessmentRegion, score: number) => void;
+  /** Collapsed shows only the heading row; the game stays mounted. */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 };
 
-export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, onRegionChange, onActiveChange, onPlacementScore, enabled, mode }: Props) {
+export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, onRegionChange, onActiveChange, onPlacementScore, enabled, mode, collapsed, onToggleCollapsed }: Props) {
   const [status, setStatus] = useState<'ready' | 'running' | 'complete'>('ready');
   const [state, setState] = useState<AssessmentState>(() => newAssessment(mode));
   const [elapsed, setElapsed] = useState(0);
@@ -268,10 +271,11 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     {state.notes.filter(note => note.region === laneRegion && !isSuccessful(note.verdict)).map(renderNote)}
   </div>;
 
-  return <article className={`assessment-panel ${mode}`} aria-label={mode === 'cpr' ? 'CPR compression rhythm assessment' : 'Heimlich rhythm assessment'}>
+  return <article className={`assessment-panel ${mode} ${collapsed ? 'collapsed' : ''}`} aria-label={mode === 'cpr' ? 'CPR compression rhythm assessment' : 'Heimlich rhythm assessment'}>
     <div className="assessment-heading">
       <div><h2>Rhythm skill check</h2><p>{mode === 'cpr' ? 'Match each chest compression to the moving bars.' : 'Match each back blow and abdominal thrust to the moving bars.'}</p></div>
       <span className="assessment-mode-tag">{mode === 'cpr' ? '30 COMPRESSIONS' : '5 BACK + 5 ABDOMEN'}</span>
+      <button type="button" className="assessment-collapse" aria-expanded={!collapsed} onClick={onToggleCollapsed}>{collapsed ? 'Expand ▾' : 'Collapse ▴'}</button>
     </div>
     {!enabled && <p className="assessment-availability">The rhythm skill check covers severe choking and CPR. Select Severe choking or Unresponsive / CPR to begin.</p>}
     <div className="assessment-stats">
