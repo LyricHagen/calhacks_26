@@ -39,7 +39,6 @@ export const PHASE_GUIDES: Record<GuidePhase, PhaseGuide> = {
   },
   cough: {
     steps: [
-      'Encourage them to keep coughing',
       'Do not give back blows or abdominal thrusts',
       'Watch for a weak or silent cough, or trouble breathing',
     ],

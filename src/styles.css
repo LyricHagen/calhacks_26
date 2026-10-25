@@ -171,13 +171,6 @@ a {
   gap: 9px;
 }
 
-.eyebrow-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #13c68e;
-}
-
 .page-intro h1 {
   font-family: Manrope,system-ui,sans-serif;
   font-size: clamp(31px,3vw,43px);
@@ -386,13 +379,6 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.step-tag-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #1bb98c;
 }
 
 .instruction-panel h2 {
@@ -621,14 +607,6 @@ a {
   font-weight: 700;
   margin-top: -5px;
   margin-bottom: 5px;
-}
-
-.legend-dot {
-  height: 9px;
-  width: 9px;
-  border-radius: 50%;
-  background: #05b78d;
-  box-shadow: 0 0 0 4px #d5f6e9;
 }
 
 .coach-panel {
@@ -1916,16 +1894,9 @@ a {
 
 /* Figure animation escalates with the scenario: lvl-1 effective cough,
    lvl-2 severe choking, lvl-3 unresponsive (slumped, no motion). */
-.figure-2d,.head-2d,.shoulders-2d {
-  transform-box: view-box;
-}
-
 .figure-2d {
+  transform-box: view-box;
   transform-origin: 184px 380px;
-}
-
-.head-2d {
-  transform-origin: 184px 112px;
 }
 
 .lvl-1 .figure-2d {
@@ -1939,15 +1910,6 @@ a {
 .lvl-3 .figure-2d {
   transform: translateY(4px) rotate(1deg);
   transition: transform .8s ease;
-}
-
-.lvl-3 .head-2d {
-  transform: rotate(7deg) translateY(5px);
-  transition: transform .8s ease;
-}
-
-.lvl-3 .shoulders-2d {
-  transform: translateY(3px);
 }
 
 @keyframes bounce2d {
