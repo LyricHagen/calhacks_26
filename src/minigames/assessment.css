@@ -828,6 +828,34 @@
   .compact-training-page .rhythm-collapsed > .bottom-rhythm-section {
     align-self: end;
   }
+
+  /* Expanded: the coach and accuracy cards shrink to their content so the
+     rhythm game moves up instead of sitting below empty card space. */
+  .compact-training-page .training-assessment-layout.rhythm-expanded {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .compact-training-page .rhythm-expanded > .three-column-training > .learning-coach-panel,
+  .compact-training-page .rhythm-expanded > .three-column-training > .placement-score-panel {
+    height: auto;
+  }
+  /* The game sits directly under the cards at its own height. */
+  .compact-training-page .rhythm-expanded > .bottom-rhythm-section { align-self: start; }
+  /* Lanes, notes and shatter effects scale with the timeline height. */
+  .compact-training-page .rhythm-expanded .assessment-timeline {
+    height: clamp(100px, calc(100dvh - 720px), 130px);
+    display: flex;
+    flex-direction: column;
+  }
+  .compact-training-page .rhythm-expanded .assessment-lane { flex: 1 1 0; height: auto; min-height: 0; }
+  .compact-training-page .rhythm-expanded .assessment-note { top: 18%; height: 64%; }
+  .compact-training-page .rhythm-expanded .assessment-timeline-bottom {
+    flex: 0 0 22px;
+    box-sizing: border-box;
+    padding-block: 0;
+  }
+  .compact-training-page .rhythm-expanded .assessment-hit-line { bottom: 22px; }
+  .compact-training-page .rhythm-expanded .assessment-shatter { top: calc((100% - 22px) * .09); height: calc((100% - 22px) * .32); }
+  .compact-training-page .rhythm-expanded .assessment-shatter.front { top: calc((100% - 22px) * .59); }
 }
 
 
