@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ADC_MAX, EMPTY, formatForce, isSaturated, padNewtons, NineSensorDetector, NineSensorProtocol,
+  ADC_MAX, EMPTY, formatForce, isSaturated, padNewtons, NineSensorDetector, NineSensorProtocol, releaseLevel,
   SENSOR_NAMES, type ActionType, type DetectedAction, type NineFrame, type NineReadings,
   type SensorId,
 } from './trainerLab/sensors';
@@ -17,7 +17,11 @@ import {
   type SpatialRegion,
   type SpatialSamples,
 } from './trainerLab/spatialModel';
-import { BACK_TO_FRONT_CUE, PHASE_GUIDES } from './trainerLab/instructions';
+import { BACK_TO_FRONT_CUE, CPR_CYCLE_CUE, PHASE_GUIDES, type GuidePhase } from './trainerLab/instructions';
+import {
+  COUGH_SETTINGS, CPR_SETTINGS, gradeCough, gradeCprCycle, liveRate, rateInRange,
+  type CprCompression, type ScenarioResult,
+} from './trainerLab/grading';
 import { RhythmGame } from './minigames/RhythmGame';
 import { preloadCues, speak, speakAnswer, speechSupported, stopSpeech } from './trainerLab/speech';
 import {
@@ -32,6 +36,23 @@ type Tone = 'neutral' | 'success' | 'warning';
 type Connection = 'demo' | 'connecting' | 'live' | 'error';
 type Feedback = { tone: Tone; heading: string; detail: string; spoken?: string };
 type Counts = { back: number; front: number; cpr: number; correct: number; errors: number; rounds: number };
+type CoughState = {
+  // observe: cough is effective, hands off; failing: cough has failed, start back blows; done: graded.
+  phase: 'observe' | 'failing' | 'done';
+  // When the current phase (or hands-off window) started, performance.now() time.
+  since: number;
+  interventions: number;
+  wrongActions: number;
+  result: ScenarioResult | null;
+};
+type CprState = {
+  // Compressions in the cycle in progress.
+  current: CprCompression[];
+  offTarget: number;
+  pauses: number;
+  breakMs: number | null;
+  cycles: ScenarioResult[];
+};
 type History = { time: string; label: string; verdict: string; good: boolean; peak: number; placementScore: number | null; riseMs: number | null; contactMs: number | null };
 
 type SerialPort = {
@@ -53,6 +74,20 @@ const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 
 const MIN_INTERVAL_MS = 1000;
 const MAX_INTERVAL_MS = 3000;
 const noLastStart = (): Record<ActionType, number> => ({ back: -Infinity, front: -Infinity, cpr: -Infinity });
+const initialCough = (): CoughState => ({ phase: 'observe', since: performance.now(), interventions: 0, wrongActions: 0, result: null });
+const INITIAL_CPR: CprState = { current: [], offTarget: 0, pauses: 0, breakMs: null, cycles: [] };
+// Frame-level CPR timing: start and peak of the last compression, lowest sternum
+// signal since it (for recoil), when pressure was last let off (for leaning),
+// end of the last cycle, and the last spoken correction.
+const initialCprTiming = () => ({
+  lastStart: -Infinity, lastPeak: 0, trough: Infinity, releasedAt: performance.now(), leanWarned: false,
+  cycleEnd: null as number | null, lastCoach: -Infinity,
+});
+// Minimum gap between spoken CPR corrections, so the voice doesn't talk over every compression.
+const CPR_COACH_GAP_MS = 4000;
+// Demo compressions: start-to-start interval and jitter (≈105-115 per minute).
+const SIM_COMPRESSION_MS = 545;
+const SIM_COMPRESSION_JITTER_MS = 50;
 // Longest 10-90% rise that still counts as a sharp hit rather than a push.
 // From mannequin tests with plates: normal thrusts rose in 175-211 ms, slow
 // ones in 547-1272 ms. Normal back blows rose in 117-322 ms; the back cutoff
@@ -212,12 +247,11 @@ const AIRWAY_STATUS: Record<AirwayMotion, string> = {
 };
 
 // Side profile traced from a head-and-throat reference: nasal cavity and pharynx in pink,
-// trachea in darker red in front of the oesophagus. Cough shows air moving up and out of
-// the mouth in bursts; the other scenarios show a lodged object at the top of the trachea.
+// trachea in darker red in front of the oesophagus. An effective cough shows air moving up and
+// out of the mouth in bursts; otherwise a lodged object sits at the top of the trachea.
 // A held correct contact eases the object up; a registered one sends a puff of air up the
 // trachea that bumps it (pulse replays the bump). It never clears: sensors can't tell.
-function Airway({ scenario, motion, pulse }: { scenario: Scenario; motion: AirwayMotion; pulse: number }) {
-  const open = scenario === 'cough';
+function Airway({ open, motion, pulse }: { open: boolean; motion: AirwayMotion; pulse: number }) {
   return <div className={`airway-mini airway-${motion}`} aria-label={open ? 'Airflow illustrated through a partly open airway' : 'Illustrated airway blocked by an object'} role="img">
     <svg viewBox="60 30 400 555" aria-hidden="true">
       <path d="M160 585C180 560 205 545 205 520V448C180 440 135 442 118 432C102 422 98 400 106 382C98 372 96 360 104 352C94 345 92 333 98 322C84 316 66 306 72 294C86 270 102 246 108 218C110 180 130 112 190 70C240 36 330 34 390 78C440 118 452 200 440 270C430 320 400 350 380 372C372 420 378 500 392 585Z" fill={SKIN} stroke={SKIN_LINE} strokeWidth="5" strokeLinejoin="round" />
@@ -231,6 +265,17 @@ function Airway({ scenario, motion, pulse }: { scenario: Scenario; motion: Airwa
           <g className="airway-object"><circle cx="242" cy="446" r="17" fill="#e8a33d" stroke="#b76539" strokeWidth="5" /></g>
         </g>}
     </svg>
+  </div>;
+}
+
+function ResultCard({ title, result }: { title: string; result: ScenarioResult }) {
+  return <div className={`result-card ${result.grade === 'Needs work' ? 'weak' : ''}`}>
+    <div className="result-card-head">
+      <span>{title} <em className="beta-tag" title="Experimental scoring; thresholds are still being tuned">BETA</em></span>
+      <strong>{result.score}/100 · {result.grade}</strong></div>
+    <ul>{result.parts.map(part => <li key={part.label} className={part.good ? 'good' : 'bad'}>
+      <span>{part.good ? '✓' : '!'} {part.label}</span><b>{part.value}</b></li>)}</ul>
+    <p>{result.notes.join(' ')}</p>
   </div>;
 }
 
@@ -275,6 +320,10 @@ export function TrainerExperience() {
   const [heard, setHeard] = useState('');
   const [thinking, setThinking] = useState(false);
   const [exchange, setExchange] = useState<{ question: string; answer: string } | null>(null);
+  const [cough, setCough] = useState<CoughState>(initialCough);
+  const [cpr, setCpr] = useState<CprState>(INITIAL_CPR);
+  // Ticks while the cough scenario is timing, for the countdown and response clock.
+  const [clock, setClock] = useState(() => performance.now());
 
   const detector = useRef(new NineSensorDetector());
   const protocol = useRef(new NineSensorProtocol());
@@ -295,6 +344,9 @@ export function TrainerExperience() {
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contactTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStart = useRef(noLastStart());
+  const coughRef = useRef(cough);
+  const cprRef = useRef(cpr);
+  const cprTiming = useRef(initialCprTiming());
   const spatialSamplesRef = useRef(spatialSamples);
   const mounted = useRef(true);
   const voiceRef = useRef(voiceOn);
@@ -309,9 +361,12 @@ export function TrainerExperience() {
   thresholdRef.current = threshold;
   spatialSamplesRef.current = spatialSamples;
   voiceRef.current = voiceOn;
-  const phase = scenario === 'severe' ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review') : scenario === 'unresponsive' ? 'cpr' : 'cough';
-  const recommended: SensorId | null = phase === 'back' ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 8 : null;
-  const defaultView: View = phase === 'back' ? 'back' : 'front';
+  const phase: GuidePhase = scenario === 'severe'
+    ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review')
+    : scenario === 'unresponsive' ? 'cpr' : cough.phase === 'observe' ? 'cough' : 'coughFailing';
+  const coughFailing = scenario === 'cough' && cough.phase === 'failing';
+  const recommended: SensorId | null = phase === 'back' || coughFailing ? 5 : phase === 'front' ? 0 : phase === 'cpr' ? 8 : null;
+  const defaultView: View = phase === 'back' || phase === 'coughFailing' ? 'back' : 'front';
   const view = viewOverride ?? defaultView;
   const active = readings.reduce<{ value: number; id: SensorId | null }>((top, value, i) => {
     const delta = Math.max(0, value - baseline[i]);
@@ -355,6 +410,16 @@ export function TrainerExperience() {
   }
   handleQuestionRef.current = question => { void handleQuestion(question); };
 
+  function updateCough(next: CoughState) {
+    coughRef.current = next;
+    setCough(next);
+  }
+
+  function updateCpr(next: CprState) {
+    cprRef.current = next;
+    setCpr(next);
+  }
+
   function toggleWake() {
     const next = !wakeOn;
     setWakeOn(next);
@@ -383,33 +448,131 @@ export function TrainerExperience() {
     setLastPlacement(placement);
 
     if (scenarioNow === 'cough') {
-      result = {
-        tone: 'warning',
-        heading: 'Pause physical intervention',
-        detail: 'Encourage an effective cough and monitor. Back blows and abdominal thrusts are for severe obstruction.',
-        spoken: 'Stop. Encourage them to keep coughing.',
-      };
-    } else if (scenarioNow === 'unresponsive') {
-      good = event.type === 'cpr' && event.sensor === 8;
+      const state = coughRef.current;
 
-      if (good) {
-        nextCounts.cpr += 1;
+      if (state.phase === 'observe') {
+        // Restraint has to hold for the whole window, so contact restarts it.
+        updateCough({ ...state, since: event.time, interventions: state.interventions + 1 });
+        result = {
+          tone: 'warning',
+          heading: 'Hands off — the cough is working',
+          detail: 'Back blows and abdominal thrusts are for a cough that has failed. Encourage them to keep coughing. The observation timer has restarted.',
+          spoken: 'Hands off. Let them keep coughing.',
+        };
+      } else if (state.phase === 'done') {
+        ambiguous = true;
+        result = {
+          tone: 'neutral',
+          heading: 'Scenario complete',
+          detail: 'Continue to severe choking to practise the full sequence, or reset to try this scenario again.',
+        };
+      } else if (event.type !== 'back') {
+        updateCough({ ...state, wrongActions: state.wrongActions + 1 });
+        result = {
+          tone: 'warning',
+          heading: 'Start with back blows',
+          detail: event.type === 'front'
+            ? 'Give 5 back blows before moving on to abdominal thrusts.'
+            : 'They are still responsive, so this is not CPR yet. Give a back blow between the shoulder blades.',
+          spoken: 'Start with back blows.',
+        };
+      } else if (event.riseMs !== null && event.riseMs > MAX_RISE_MS.back) {
+        ambiguous = true;
+        result = {
+          tone: 'warning',
+          heading: 'Too slow a push — not counted',
+          detail: `That back blow took ${event.riseMs} ms to build up. Strike quickly and sharply with the heel of your hand. The clock is still running.`,
+          spoken: 'Too slow. Make it a quick, sharp blow.',
+        };
+      } else if (!placement || placement.uncertainty === 'broad' || placement.score < SPATIAL_SETTINGS.acceptanceScore) {
+        // Right action, so not an error, but the response clock keeps running.
+        ambiguous = true;
+        result = {
+          tone: 'neutral',
+          heading: 'Right action — adjust placement',
+          detail: placement
+            ? `${placement.correction} Approximate placement score: ${Math.round(placement.score)}/100. The clock is still running.`
+            : 'Not enough sensor response to estimate placement. Strike again between the shoulder blades.',
+          spoken: placement?.spokenCorrection ?? 'Unclear. Try again.',
+        };
+      } else {
+        good = true;
+        const outcome = gradeCough({
+          interventions: state.interventions,
+          wrongActions: state.wrongActions,
+          responseMs: Math.max(0, event.time - event.durationMs - state.since),
+        });
+        updateCough({ ...state, phase: 'done', result: outcome });
+        result = {
+          tone: outcome.grade === 'Needs work' ? 'warning' : 'success',
+          heading: `Cough scenario graded · ${outcome.score}/100`,
+          detail: outcome.notes.join(' '),
+          spoken: 'Good. Keep going with back blows.',
+        };
       }
+    } else if (scenarioNow === 'unresponsive') {
+      const state = cprRef.current;
+      const timing = cprTiming.current;
 
-      result = good
-        ? {
-            tone: 'success',
-            heading: 'Sternum contact recorded',
-            detail: 'Hand placement contact detected. This does not measure CPR compression depth or effectiveness.',
-            // Compressions come at 100-120 per minute, so only call out every tenth.
-            spoken: nextCounts.cpr % 10 === 0 ? `${nextCounts.cpr}.` : undefined,
-          }
-        : {
-            tone: 'warning',
-            heading: 'Move to the sternum',
-            detail: 'Use the single central sternum sensor for this CPR placement scenario.',
-            spoken: 'Move to the centre of the chest.',
+      if (event.type !== 'cpr') {
+        updateCpr({ ...state, offTarget: state.offTarget + 1 });
+        result = {
+          tone: 'warning',
+          heading: event.type === 'front' ? 'Too low — that is the abdomen' : 'Compressions go on the front of the chest',
+          detail: 'Place the heel of your hand on the centre of the chest, on the lower half of the breastbone.',
+          spoken: event.type === 'front' ? 'Too low. Move up to the centre of the chest.' : 'Move to the centre of the chest.',
+        };
+      } else {
+        good = true;
+        nextCounts.cpr += 1;
+        const start = event.time - event.durationMs;
+        const sinceLast = start - timing.lastStart;
+        const firstInCycle = state.current.length === 0;
+        const paused = !firstInCycle && sinceLast > CPR_SETTINGS.pauseMs;
+        const compression: CprCompression = firstInCycle || paused
+          ? { intervalMs: null, recoilOk: null }
+          : { intervalMs: sinceLast, recoilOk: timing.trough <= timing.lastPeak * CPR_SETTINGS.recoilFraction };
+        const breakMs = firstInCycle && timing.cycleEnd !== null ? start - timing.cycleEnd : state.breakMs;
+        const current = [...state.current, compression];
+        const pauses = state.pauses + (paused ? 1 : 0);
+        timing.lastStart = start;
+        timing.lastPeak = event.peak;
+        timing.trough = Infinity;
+
+        if (current.length >= CPR_SETTINGS.cycleLength) {
+          const outcome = gradeCprCycle({ compressions: current, offTarget: state.offTarget, pauses, breakMs });
+          timing.cycleEnd = event.time;
+          updateCpr({ ...INITIAL_CPR, cycles: [...state.cycles, outcome] });
+          result = {
+            tone: outcome.grade === 'Needs work' ? 'warning' : 'success',
+            heading: `Cycle ${state.cycles.length + 1} graded · ${outcome.score}/100`,
+            detail: outcome.notes.join(' '),
+            spoken: CPR_CYCLE_CUE,
           };
+        } else {
+          updateCpr({ ...state, current, pauses, breakMs });
+          const rate = liveRate(current);
+          const cue = compression.recoilOk === false
+            ? 'Let the chest come all the way up.'
+            : rate !== null && rate < CPR_SETTINGS.minRate ? 'Push faster.'
+              : rate !== null && rate > CPR_SETTINGS.maxRate ? 'Slow down a little.'
+                : null;
+          const coach = cue !== null && event.time - timing.lastCoach >= CPR_COACH_GAP_MS;
+          if (coach) timing.lastCoach = event.time;
+          const notes = [
+            rate === null ? 'Keep a steady rhythm: 100 to 120 a minute.' : `Rate ≈ ${Math.round(rate)}/min (target 100–120).`,
+            compression.recoilOk === false ? 'The chest did not come all the way back up before this one.' : '',
+            paused ? `Compressions stopped for ${(sinceLast / 1000).toFixed(1)} s. Keep going until the 30 are done.` : '',
+            firstInCycle && breakMs !== null && breakMs > CPR_SETTINGS.maxBreakMs ? `The break before this cycle was ${Math.round(breakMs / 1000)} s; keep it under 10.` : '',
+          ];
+          result = {
+            tone: cue || paused ? 'warning' : 'success',
+            heading: `Compression ${current.length} of ${CPR_SETTINGS.cycleLength}`,
+            detail: `${notes.filter(Boolean).join(' ')} Depth is not measured.`,
+            spoken: coach ? cue! : current.length % 10 === 0 ? `${current.length}.` : undefined,
+          };
+        }
+      }
     } else {
       const expected: SpatialRegion | 'review' =
         nextCounts.back < 5 ? 'back' : nextCounts.front < 5 ? 'front' : 'review';
@@ -575,6 +738,24 @@ export function TrainerExperience() {
     if (readingWindow.current.length > 75) readingWindow.current.shift();
     if (modeRef.current === 'play') gameInputRef.current(vals, performance.now());
     if (modeRef.current === 'train') {
+      if (scenarioRef.current === 'unresponsive') {
+        const timing = cprTiming.current;
+        const now = performance.now();
+        const signal = Math.max(0, vals[8] - baselineRef.current[8]);
+        // Lowest sternum signal since the last compression, for the recoil check.
+        timing.trough = Math.min(timing.trough, signal);
+        // Pressure that never lets off means leaning: the detector sees one long
+        // press and no compressions register, so warn while it's happening.
+        if (signal <= releaseLevel(thresholdRef.current)) {
+          timing.releasedAt = now;
+          timing.leanWarned = false;
+        } else if (!timing.leanWarned && now - timing.releasedAt >= CPR_SETTINGS.leanMs) {
+          timing.leanWarned = true;
+          timing.lastCoach = now;
+          setFeedback({ tone: 'warning', heading: 'Ease off between compressions', detail: 'Pressure has stayed on the chest, so compressions are not registering. Let the chest come all the way back up after each push.' });
+          say('Let the chest come all the way up.');
+        }
+      }
       const events = detector.current.process(vals, baselineRef.current, performance.now(), thresholdRef.current, frame.peaks, frame.deviceTimeMs);
       for (const event of events) evaluate(event);
     }
@@ -589,6 +770,9 @@ export function TrainerExperience() {
     simBusyRef.current = false; setSimBusy(false);
     detector.current.reset();
     lastStart.current = noLastStart();
+    updateCough(initialCough());
+    updateCpr(INITIAL_CPR);
+    cprTiming.current = initialCprTiming();
     countsRef.current = { ...INITIAL_COUNTS };
     setCounts({ ...INITIAL_COUNTS });
     setHistory([]);
@@ -607,7 +791,7 @@ export function TrainerExperience() {
     scenarioRef.current = next;
     setViewOverride(null);
     say(PHASE_GUIDES[next === 'cough' ? 'cough' : next === 'unresponsive' ? 'cpr' : 'back'].spoken);
-    setFeedback(next === 'cough' ? { tone: 'neutral', heading: 'A strong cough is a good sign', detail: 'Encourage the person to keep coughing. Watch for a change to weak or absent cough, inability to speak, or worsening responsiveness.' } : next === 'unresponsive' ? { tone: 'neutral', heading: 'Begin CPR practice', detail: 'Activate emergency response, start CPR with compressions and follow a certified adult BLS protocol. Only remove a visible object; never perform a blind finger sweep.' } : startFeedback);
+    setFeedback(next === 'cough' ? { tone: 'neutral', heading: 'A strong cough is a good sign', detail: 'Encourage the person to keep coughing and keep your hands off the mannequin. Watch for the cough becoming weak or silent, then act.' } : next === 'unresponsive' ? { tone: 'neutral', heading: 'Begin CPR practice', detail: 'Activate emergency response and start compressions: 100 to 120 a minute, letting the chest come fully back up. Each set of 30 is graded. Only remove a visible object; never perform a blind finger sweep.' } : startFeedback);
   }
 
   function simulate(ids: SensorId[]) {
@@ -633,6 +817,30 @@ export function TrainerExperience() {
         simTimer.current = null;
       }, 210);
     }, 240);
+  }
+
+  // Demo mode: a set of sternum presses at a realistic CPR rhythm.
+  function simulateCompressions(count: number) {
+    if (connection === 'live' || simBusyRef.current) return;
+    simBusyRef.current = true; setSimBusy(true);
+    let remaining = count;
+    const press = () => {
+      const pressed = simulatedContact(8, baselineRef.current, 2800);
+      processFrameRef.current({ readings: pressed, peaks: pressed, deviceTimeMs: null });
+      simTimer.current = setTimeout(() => {
+        const resting = [...baselineRef.current] as NineReadings;
+        processFrameRef.current({ readings: resting, peaks: resting, deviceTimeMs: null });
+        remaining -= 1;
+        simTimer.current = remaining > 0
+          ? setTimeout(press, SIM_COMPRESSION_MS - 240 + Math.round((Math.random() - 0.5) * SIM_COMPRESSION_JITTER_MS))
+          : setTimeout(() => {
+            simBusyRef.current = false;
+            setSimBusy(false);
+            simTimer.current = null;
+          }, 210);
+      }, 240);
+    };
+    press();
   }
 
   // First time only: Chrome needs a click to show its device picker. After
@@ -760,6 +968,23 @@ export function TrainerExperience() {
     };
   }, []);
 
+  // Cough scenario clock: count down the hands-off window, then make the cough fail.
+  useEffect(() => {
+    if (mode !== 'train' || scenario !== 'cough' || cough.phase === 'done') return;
+    const timer = setInterval(() => {
+      const now = performance.now();
+      setClock(now);
+      const state = coughRef.current;
+      if (state.phase === 'observe' && now - state.since >= COUGH_SETTINGS.observeMs) {
+        updateCough({ ...state, phase: 'failing', since: now });
+        setViewOverride(null);
+        setFeedback({ tone: 'warning', heading: 'The cough is failing', detail: 'They can no longer cough, speak or breathe well. This is now severe choking: start back blows straight away.' });
+        say(PHASE_GUIDES.coughFailing.spoken);
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [mode, scenario, cough.phase]);
+
   function calibrateRest() {
     const samples = readingWindow.current.slice(-50);
     const reference = samples.length ? samples : [latestValues.current];
@@ -830,6 +1055,7 @@ export function TrainerExperience() {
       product: 'Thrustworthy', exportedAt: new Date().toISOString(),
       scenario, connection, counts, thresholdADCAboveBaseline: threshold,
       baseline, events: history,
+      coughResult: cough.result, cprCycles: cpr.cycles,
       spatialCalibration: {
         frontReferences: calibratedCount('front', spatialSamples),
         backReferences: calibratedCount('back', spatialSamples),
@@ -845,17 +1071,37 @@ export function TrainerExperience() {
   if (phase === 'back') { promptTag = `BACK BLOWS · ${counts.back + 1} OF 5`; instruction = 'Deliver a back blow'; guide = 'Target: between the shoulder blades'; }
   if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; guide = 'Target: upper abdomen, above the navel'; }
   if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; guide = 'Practice round recorded — not airway clearance'; }
-  if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH'; instruction = 'Encourage them to keep coughing'; guide = 'No sensor contact needed in this scenario'; }
-  if (phase === 'cpr') { promptTag = `CPR CONTACTS · ${counts.cpr} RECORDED`; instruction = 'Begin CPR practice'; guide = 'Target: centre of chest over the sternum'; }
+  if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH · OBSERVING'; instruction = 'Encourage them to keep coughing'; guide = 'Hands off: no sensor contact in this step'; }
+  if (phase === 'coughFailing') {
+    if (cough.phase === 'done') { promptTag = 'SCENARIO COMPLETE'; instruction = 'Cough scenario graded'; guide = 'Continue to severe choking for the full sequence'; }
+    else { promptTag = 'COUGH FAILING · ACT NOW'; instruction = 'Start back blows'; guide = 'Target: between the shoulder blades'; }
+  }
+  if (phase === 'cpr') { promptTag = `CPR · CYCLE ${cpr.cycles.length + 1} · ${cpr.current.length} OF ${CPR_SETTINGS.cycleLength}`; instruction = 'Give chest compressions'; guide = 'Target: centre of chest, 100–120 per minute'; }
 
   const howTo = PHASE_GUIDES[phase];
+  const cprRate = liveRate(cpr.current);
+  const cprRecoil = cpr.current.filter(item => item.recoilOk !== null);
+  const cprRecoilPct = cprRecoil.length ? Math.round(cprRecoil.filter(item => item.recoilOk).length / cprRecoil.length * 100) : null;
+  const lastCycle = cpr.cycles.at(-1) ?? null;
+  const coughElapsed = Math.max(0, clock - cough.since);
+  function cprProgress() {
+    const rate = cprRate === null ? 'rate not yet known' : `rate about ${Math.round(cprRate)} per minute`;
+    const recoil = cprRecoilPct === null ? '' : `, full recoil on ${cprRecoilPct}%`;
+    const last = lastCycle ? ` Last cycle scored ${lastCycle.score}/100: ${lastCycle.notes.join(' ')}` : '';
+    return `Cycle ${cpr.cycles.length + 1}: ${cpr.current.length}/${CPR_SETTINGS.cycleLength} compressions, ${rate}${recoil}.${last}`;
+  }
+  function coughProgress() {
+    if (cough.phase === 'observe') return `Observing an effective cough, hands off. ${cough.interventions} early interventions so far.`;
+    if (cough.phase === 'failing') return `The cough has failed ${(coughElapsed / 1000).toFixed(0)} s ago; the trainee should be giving back blows now.`;
+    return `Scenario graded ${cough.result?.score}/100: ${cough.result?.notes.join(' ')}`;
+  }
   assistantContext.current = {
-    scenario: scenario === 'severe' ? 'Adult severe choking (responsive)' : scenario === 'cough' ? 'Adult mild obstruction with an effective cough' : 'Unresponsive adult, CPR placement practice',
+    scenario: scenario === 'severe' ? 'Adult severe choking (responsive)' : scenario === 'cough' ? 'Adult mild obstruction with an effective cough that fails partway through' : 'Unresponsive adult, CPR compression practice (rate, recoil and placement graded; not depth)',
     step: promptTag,
     instruction: `${instruction}. Steps: ${howTo.steps.join('; ')}. ${guide}.`,
     progress: scenario === 'severe'
       ? `Round ${counts.rounds + 1}: ${counts.back}/5 back blows, ${counts.front}/5 abdominal thrusts. ${counts.correct} on target, ${counts.errors} needing correction.`
-      : scenario === 'unresponsive' ? `${counts.cpr} sternum contacts recorded.` : 'No physical intervention in this scenario.',
+      : scenario === 'unresponsive' ? cprProgress() : coughProgress(),
     lastFeedback: `${feedback.heading}. ${feedback.detail}`,
     // Peak ADC is left out on purpose: it isn't force, and Gemini would read it as such.
     recentHits: [...history].reverse().map((hit, index) => {
@@ -894,7 +1140,7 @@ export function TrainerExperience() {
   const visiblePlacement = spatialHeatmap ?? lastPlacement;
 
   const phaseRegion: SpatialRegion | null =
-    phase === 'front' || phase === 'back' ? phase : null;
+    phase === 'front' || phase === 'back' ? phase : coughFailing ? 'back' : null;
   const activeRegion: SpatialRegion | 'cpr' | null = active === null
     ? null
     : active <= 4 ? 'front' : active <= 7 ? 'back' : 'cpr';
@@ -904,12 +1150,12 @@ export function TrainerExperience() {
   const liveAmbiguous = phaseRegion !== null &&
     activeRegion === phaseRegion && livePhaseEstimate?.uncertainty === 'broad';
   const activeWrong = active !== null && (
-    scenario === 'cough' ||
+    (scenario === 'cough' && cough.phase === 'observe') ||
     (phaseRegion !== null && (activeRegion !== phaseRegion || (livePhaseEstimate?.score ?? 0) < SPATIAL_SETTINGS.borderlineScore)) ||
     (phase === 'cpr' && active !== 8)
   );
   const activeHint = active !== null
-    ? scenario === 'cough'
+    ? scenario === 'cough' && cough.phase === 'observe'
       ? 'An effective cough does not require physical intervention.'
       : phaseRegion && activeRegion === phaseRegion && livePhaseEstimate
         ? `${Math.round(livePhaseEstimate.score)}/100 approximate placement score. ${livePhaseEstimate.correction} Release to record or retry.`
@@ -920,8 +1166,9 @@ export function TrainerExperience() {
 
   const diagramSensor = active ?? recentContact?.sensor ?? null;
   const diagramWrong = active !== null ? activeWrong : recentContact ? !recentContact.correct : false;
-  // Only the back-blow/thrust scenario acts on the obstruction; CPR placement leaves it still.
-  const airwayMotion: AirwayMotion = scenario !== 'severe' ? 'idle'
+  // Only back blows and thrusts act on the obstruction; CPR leaves it still.
+  const airwayOpen = scenario === 'cough' && cough.phase === 'observe';
+  const airwayMotion: AirwayMotion = scenario === 'unresponsive' || airwayOpen ? 'idle'
     : active !== null ? (activeWrong ? 'idle' : 'pressing')
       : recentContact ? (recentContact.correct ? 'hit' : 'miss') : 'idle';
 
@@ -1005,12 +1252,36 @@ export function TrainerExperience() {
               <div className="progress-track">
                 <span style={{ width: `${counts.front * 20}%` }} /></div></div>}
             {scenario === 'unresponsive' && <div className="sequence-panel">
+              <div className="sequence-label">{`CYCLE ${cpr.cycles.length + 1}`} <em className="beta-tag" title="Experimental scoring; thresholds are still being tuned">BETA</em></div>
               <div className="sequence-item">
-                <span>Sternum contacts</span>
-                <strong>{counts.cpr}</strong></div>
-              <p className="tiny-note">We track placement contact, not compression depth or quality.</p></div>}
+                <span>Compressions</span>
+                <span>{cpr.current.length}/{CPR_SETTINGS.cycleLength}</span></div>
+              <div className="progress-track">
+                <span style={{ width: `${cpr.current.length / CPR_SETTINGS.cycleLength * 100}%` }} /></div>
+              <div className="sequence-item">
+                <span>Rate</span>
+                <span className={cprRate === null ? '' : rateInRange(cprRate) ? 'metric-good' : 'metric-bad'}>{cprRate === null ? '—' : `${Math.round(cprRate)}/min`}</span></div>
+              <div className="sequence-item">
+                <span>Full recoil</span>
+                <span className={cprRecoilPct === null ? '' : cprRecoilPct >= 80 ? 'metric-good' : 'metric-bad'}>{cprRecoilPct === null ? '—' : `${cprRecoilPct}%`}</span></div>
+              {lastCycle && <ResultCard title={`CYCLE ${cpr.cycles.length} RESULT`} result={lastCycle} />}
+              <p className="tiny-note">Graded on rate, recoil, placement and pauses. Compression depth is not measured.</p></div>}
+            {scenario === 'cough' && <div className="sequence-panel">
+              {cough.phase === 'observe' && <>
+                <div className="sequence-item">
+                  <span>Hands-off observation</span>
+                  <span>{Math.ceil(Math.max(0, COUGH_SETTINGS.observeMs - coughElapsed) / 1000)} s left</span></div>
+                <div className="progress-track">
+                  <span style={{ width: `${Math.min(100, coughElapsed / COUGH_SETTINGS.observeMs * 100)}%` }} /></div>
+                <div className="sequence-item">
+                  <span>Early interventions</span>
+                  <span className={cough.interventions ? 'metric-bad' : ''}>{cough.interventions}</span></div></>}
+              {cough.phase === 'failing' && <div className="sequence-item">
+                <span>Since the cough failed</span>
+                <span className="metric-bad">{(coughElapsed / 1000).toFixed(1)} s</span></div>}
+              {cough.result && <ResultCard title="COUGH SCENARIO RESULT" result={cough.result} />}</div>}
             {phase === 'review' && <button type="button" className="button-primary fill" onClick={nextRound}>Start another practice round →</button>}
-            {scenario === 'cough' && <button type="button" className="button-primary fill" onClick={() => resetSession('severe')}>Cough becomes ineffective →</button>}
+            {scenario === 'cough' && cough.phase === 'done' && <button type="button" className="button-primary fill" onClick={() => resetSession('severe')}>Continue with severe choking →</button>}
           </article>
           <article className="visual-panel">
             <div className="visual-head">
@@ -1021,7 +1292,7 @@ export function TrainerExperience() {
                 <button type="button" className={view === 'back' ? 'on' : ''} onClick={() => setViewOverride('back')}>Back</button>
                 <button type="button" className={view === 'front' ? 'on' : ''} onClick={() => setViewOverride('front')}>Front</button></div></div>
             <BodyDiagram view={view} active={diagramSensor} target={recommended} wrong={diagramWrong} cpr={phase === 'cpr'} onSensor={id => simulate([id])} flash={flash} heatmap={spatialHeatmap}
-              severity={scenario === 'cough' ? 1 : scenario === 'severe' ? 2 : 3} />
+              severity={airwayOpen ? 1 : scenario === 'unresponsive' ? 3 : 2} />
             <div className="mannequin-guide">
               Smoothed contact estimate from nearby FSR readings; areas between sensors are inferred, not measured. Back left/right are from the back-facing view.</div>
           </article>
@@ -1050,7 +1321,7 @@ export function TrainerExperience() {
                 <p className="assistant-q">“{exchange.question}”</p>
                 {exchange.answer && <p className="assistant-a">{exchange.answer}</p>}</div>}
             </div>}
-            {visiblePlacement && scenario === 'severe' && <div className="spatial-score">
+            {visiblePlacement && (scenario === 'severe' || (scenario === 'cough' && cough.phase !== 'observe')) && <div className="spatial-score">
               <div className="spatial-score-head">
                 <span>Approximate target placement score</span>
                 <strong>{Math.round(visiblePlacement.score)}/100</strong>
@@ -1082,10 +1353,10 @@ export function TrainerExperience() {
             <div className="airway-row">
               <div className="airway-copy">
                 <span className="readout-label">AIRWAY · ILLUSTRATION</span>
-                <strong className={`airway-status ${scenario === 'cough' || airwayMotion === 'pressing' || airwayMotion === 'hit' ? 'open' : 'blocked'}`}>
-                  {scenario === 'cough' ? 'Partly blocked, air moving' : AIRWAY_STATUS[airwayMotion]}</strong>
-                <span>{scenario === 'cough' ? 'A strong cough can move air and may clear the obstruction.' : 'Sensor signals cannot detect whether the airway has cleared.'}</span></div>
-              <Airway scenario={scenario} motion={airwayMotion} pulse={flash} /></div>
+                <strong className={`airway-status ${airwayOpen || airwayMotion === 'pressing' || airwayMotion === 'hit' ? 'open' : 'blocked'}`}>
+                  {airwayOpen ? 'Partly blocked, air moving' : AIRWAY_STATUS[airwayMotion]}</strong>
+                <span>{airwayOpen ? 'A strong cough can move air and may clear the obstruction.' : 'Sensor signals cannot detect whether the airway has cleared.'}</span></div>
+              <Airway open={airwayOpen} motion={airwayMotion} pulse={flash} /></div>
           </article>
         </section>
         <section className="action-strip">
@@ -1097,7 +1368,8 @@ export function TrainerExperience() {
           <div className="action-strip-controls">
             {connection !== 'live' && <>
               <button type="button" className="button-primary" disabled={simBusy || recommended === null} onClick={() => recommended !== null && simulate([recommended])}>Simulate correct contact <span>↗</span></button>
-              <button type="button" className="button-outline" disabled={simBusy} onClick={() => simulate(phase === 'back' ? [6] : phase === 'front' ? [1] : phase === 'cpr' ? [0] : [0])}>Try incorrect contact</button>
+              {phase === 'cpr' && <button type="button" className="button-outline" disabled={simBusy} onClick={() => simulateCompressions(CPR_SETTINGS.cycleLength)}>Simulate 30 compressions</button>}
+              <button type="button" className="button-outline" disabled={simBusy} onClick={() => simulate(phase === 'back' ? [6] : phase === 'front' ? [1] : [0])}>Try incorrect contact</button>
             </>}
             <button type="button" className="text-button" onClick={() => setAdvanced(v => !v)} aria-expanded={advanced}>{advanced ? 'Hide' : 'Show'} raw readings <span>{advanced ? '↑' : '↓'}</span></button>
           </div>
