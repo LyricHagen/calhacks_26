@@ -6,6 +6,7 @@ import {
   isAssessmentDone, judgeAssessmentContact, newAssessment, nextAssessmentRegion, noteLabel, windowsFor,
   type AssessmentMode, type AssessmentNote, type AssessmentRegion, type AssessmentState, type ContactRegion,
 } from './assessmentEngine';
+import { RhythmAudio } from './rhythmAudio';
 import './assessment.css';
 
 type ShatterEffect = {
@@ -58,8 +59,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
   const regionCallbackRef = useRef(onRegionChange);
   const activeCallbackRef = useRef(onActiveChange);
 
-  const audioRef = useRef<AudioContext | null>(null);
-  const playedRef = useRef<Set<number>>(new Set());
+  const audioRef = useRef(new RhythmAudio());
 
 
   regionCallbackRef.current = onRegionChange;
@@ -99,19 +99,11 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     }
   }, []);
 
-  function beep(frequency: number, volume = 0.09) {
-    const ctx = audioRef.current;
-    if (!ctx || ctx.state !== 'running') return;
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(frequency * .7, ctx.currentTime + .075);
-    gain.gain.setValueAtTime(volume, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + .12);
-    oscillator.connect(gain).connect(ctx.destination);
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + .13);
+  // Chime for a scored hit, thud for anything else (wrong area, duration, off beat).
+  function playResult(previous: AssessmentState, next: AssessmentState) {
+    const judged = next.notes.find(note => note.verdict && !previous.notes[note.id]?.verdict);
+    if (judged && isSuccessful(judged.verdict)) audioRef.current.hit(judged.verdict!, next.combo);
+    else audioRef.current.miss();
   }
 
   // The ESP32 calls this same ref as the old game, from the existing Web Serial reader.
@@ -135,9 +127,8 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
       };
       const result = judgeAssessmentContact(stateRef.current, gameEvent, spatial, SPATIAL_SETTINGS.acceptanceScore);
       if (result !== stateRef.current) {
+        playResult(stateRef.current, result);
         update(result);
-        const lastNote = result.notes.find(note => note.verdict && Math.abs(note.timingErrorMs ?? Infinity) <= ASSESSMENT_SETTINGS.hitWindowMs && Math.abs((note.atMs + (note.timingErrorMs ?? 0)) - gameEvent.startedMs) < 1);
-        beep(lastNote && ['perfect', 'good', 'okay'].includes(lastNote.verdict ?? '') ? 800 : 230, .12);
       }
     };
     return () => { inputRef.current = () => {}; };
@@ -153,13 +144,9 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
         stateRef.current, ms - latencyMs,
         detectorRef.current.heldStart === null ? null : detectorRef.current.heldStart! - startedAtRef.current - latencyMs,
       );
-      if (updated !== stateRef.current) update(updated);
-      for (const note of stateRef.current.notes) {
-        if (ms >= note.atMs && ms < note.atMs + 100 && !playedRef.current.has(note.id)) {
-          playedRef.current.add(note.id);
-          const accent = mode === 'cpr' ? note.id % 10 === 0 : note.id === 0 || note.id === 5;
-          beep(accent ? 660 : 460, .045);
-        }
+      if (updated !== stateRef.current) {
+        audioRef.current.miss(true);
+        update(updated);
       }
       if (isAssessmentDone(stateRef.current)) {
         runningRef.current = false;
@@ -170,7 +157,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     };
     request = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(request);
-  }, [status, update, mode]);
+  }, [status, update]);
 
   // Remove particles after their one-shot animation finishes.
   useEffect(() => {
@@ -186,7 +173,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     activeCallbackRef.current(false);
     runningRef.current = false;
     detectorRef.current.reset();
-    void audioRef.current?.close().catch(() => {});
+    audioRef.current.close();
   }, []);
 
   function start() {
@@ -198,21 +185,26 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
     const fresh = newAssessment(mode);
     stateRef.current = fresh;
     setState(fresh);
-    startedAtRef.current = performance.now();
-    playedRef.current.clear();
+    const startedAt = performance.now();
+    startedAtRef.current = startedAt;
     previousRegionRef.current = nextAssessmentRegion(fresh);
     regionCallbackRef.current(previousRegionRef.current);
     setElapsed(0);
     runningRef.current = true;
     activeCallbackRef.current(true);
     setStatus('running');
-    try {
-      if (!audioRef.current) audioRef.current = new AudioContext();
-      void audioRef.current.resume();
-    } catch { /* Visuals and sensor scoring work without Web Audio. */ }
+    // The metronome is known up front, so schedule every tick on the audio clock.
+    void audioRef.current.begin().then(ready => {
+      if (!ready || !runningRef.current || startedAtRef.current !== startedAt) return;
+      audioRef.current.scheduleBeats(fresh.notes.map(note => ({
+        atMs: note.atMs,
+        accent: mode === 'cpr' ? note.id % 10 === 0 : note.id === 0 || note.id === 5,
+      })), startedAt);
+    });
   }
 
   function stop() {
+    audioRef.current.cancelBeats();
     activeCallbackRef.current(false);
     runningRef.current = false;
     detectorRef.current.reset();
@@ -230,6 +222,7 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
 
   useEffect(() => {
     if (!enabled && runningRef.current) {
+      audioRef.current.cancelBeats();
       runningRef.current = false;
       detectorRef.current.reset();
       setStatus('ready');
