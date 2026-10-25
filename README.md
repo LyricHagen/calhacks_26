@@ -1,4 +1,4 @@
-# ChokeSense — guided mannequin trainer
+# Thrustworthy — guided mannequin trainer
 
 A single-page React + TypeScript training prototype for adult choking-response practice, with five abdominal FSRs, three back FSRs, and one sternum FSR. No server or API key is required for the simulated demo.
 
