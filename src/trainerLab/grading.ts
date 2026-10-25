@@ -100,6 +100,11 @@ export const CPR_SETTINGS = {
   leanMs: 1500,
   // Intervals used for the live rate.
   rateWindow: 5,
+  // A press only counts as a compression if the sternum peaks at least this
+  // far above rest (ADC, ≈ 9 N on the FSR 402 curve). The contact threshold
+  // alone (~0.4 N) lets a light touch count. Real compressions are far beyond
+  // the FSR's range; this only separates a firm push from a tap.
+  minPeakAdc: 2600,
 } as const;
 
 export type CprCompression = {

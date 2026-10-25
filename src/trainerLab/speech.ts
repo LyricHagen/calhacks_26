@@ -37,6 +37,7 @@ export const PRELOAD_CUES = [
   'Start with back blows.',
   'Good. Keep going with back blows.',
   'Push faster.',
+  'Push harder.',
   'Slow down a little.',
   'Let the chest come all the way up.',
   'Too low. Move up to the centre of the chest.',

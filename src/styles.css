@@ -1760,9 +1760,7 @@ a {
   margin-top: 16px;
 }
 
-.spatial-score-head,
-.spatial-cal-group-header,
-.spatial-cal-row {
+.spatial-score-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1815,48 +1813,6 @@ a {
   font-size: 9px;
   line-height: 1.5;
   display: block;
-}
-
-.spatial-calibration {
-  border-top: 1px solid #e0eae4;
-  padding-top: 18px;
-  margin-top: 20px;
-}
-
-.spatial-cal-group {
-  border: 1px solid #e0eae4;
-  border-radius: 12px;
-  overflow: hidden;
-  margin: 12px 0;
-}
-
-.spatial-cal-group-header {
-  background: #f4faf6;
-  padding: 13px 14px;
-}
-
-.spatial-cal-group-header strong {
-  font-size: 12px;
-}
-
-.spatial-cal-group-header span {
-  color: #5c8975;
-  font-size: 11px;
-}
-
-.spatial-cal-row {
-  padding: 9px 14px;
-  border-top: 1px solid #edf1ee;
-  font-size: 11px;
-}
-
-.spatial-cal-row > span {
-  flex: 1;
-  min-width: 0;
-}
-
-.spatial-cal-row button {
-  flex-shrink: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2106,4 +2062,14 @@ a {
   padding: 1px 4px;
   margin-left: 4px;
   vertical-align: 1px;
+}
+
+/* No visible scroll bars anywhere. Areas that overflow still scroll with the
+   mouse wheel, trackpad or touch. */
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }

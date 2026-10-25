@@ -5,17 +5,13 @@ import {
   type SensorId,
 } from './trainerLab/sensors';
 import {
-  calibratedCount,
   emptySpatialSamples,
   estimatePlacement,
-  hasSpatialCalibration,
-  signalPattern,
   simulatedContact,
   SPATIAL_REFERENCES,
   SPATIAL_SETTINGS,
   type SpatialEstimate,
   type SpatialRegion,
-  type SpatialSamples,
 } from './trainerLab/spatialModel';
 import { BACK_TO_FRONT_CUE, CPR_CYCLE_CUE, PHASE_GUIDES, type GuidePhase } from './trainerLab/instructions';
 import {
@@ -30,6 +26,9 @@ import {
 } from './trainerLab/assistant';
 
 type Mode = 'train' | 'calibrate' | 'test';
+
+// No per-session reference patterns: placement uses the default geometry model.
+const SPATIAL_SAMPLES = emptySpatialSamples();
 type Scenario = 'severe' | 'cough' | 'unresponsive';
 type View = 'front' | 'back';
 type Tone = 'neutral' | 'success' | 'warning';
@@ -91,7 +90,11 @@ const INITIAL_CPR: CprState = { current: [], offTarget: 0, pauses: 0, breakMs: n
 const initialCprTiming = () => ({
   lastStart: -Infinity, lastPeak: 0, trough: Infinity, releasedAt: performance.now(), leanWarned: false,
   cycleEnd: null as number | null, lastCoach: -Infinity,
+  // Last time the sternum was pressed past the contact threshold.
+  sternumActiveAt: -Infinity,
 });
+// An abdomen hit within this long of a sternum press is bleed from the compression.
+const CPR_BLEED_SLACK_MS = 150;
 // Minimum gap between spoken CPR corrections, so the voice doesn't talk over every compression.
 const CPR_COACH_GAP_MS = 4000;
 // Demo compressions: start-to-start interval and jitter (≈105-115 per minute).
@@ -121,6 +124,17 @@ const startFeedback: Feedback = {
   detail: 'Follow the instruction, then use the mannequin or a connected sensor. We will assess contact location and sequence as you practise.',
 };
 const empty = (): NineReadings => [...EMPTY] as NineReadings;
+const BACK_SENSORS: SensorId[] = [5, 6, 7];
+// Pin the back pads to their resting value, as if untouched.
+function withoutBackSensors(frame: NineFrame, baseline: NineReadings): NineFrame {
+  const readings = [...frame.readings] as NineReadings;
+  const peaks = [...frame.peaks] as NineReadings;
+  for (const id of BACK_SENSORS) {
+    readings[id] = baseline[id];
+    peaks[id] = baseline[id];
+  }
+  return { ...frame, readings, peaks };
+}
 const VOICE_KEY = 'thrustworthy-voice';
 const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five'];
 const WAKE_KEY = 'thrustworthy-wake-word';
@@ -269,7 +283,8 @@ export function TrainerExperience() {
   const [mode, setMode] = useState<Mode>('train');
   const [scenario, setScenario] = useState<Scenario>('severe');
   const [assessmentRunning, setAssessmentRunning] = useState(false);
-  const [rhythmCollapsed, setRhythmCollapsed] = useState(false);
+  // Starts collapsed so the coaching cards fit on a laptop screen; expand to play.
+  const [rhythmCollapsed, setRhythmCollapsed] = useState(true);
   const [assessmentRegion, setAssessmentRegion] = useState<SpatialRegion>('back');
   const [assessmentScores, setAssessmentScores] = useState<Record<SpatialRegion, number[]>>({ back: [], front: [] });
   const [counts, setCounts] = useState<Counts>({ ...INITIAL_COUNTS });
@@ -291,8 +306,6 @@ export function TrainerExperience() {
   const [testTouched, setTestTouched] = useState<SensorId[]>([]);
   const [framesReceived, setFramesReceived] = useState(0);
   const [simBusy, setSimBusy] = useState(false);
-  const [spatialSamples, setSpatialSamples] = useState<SpatialSamples>(emptySpatialSamples);
-  const [calibrationMessage, setCalibrationMessage] = useState('Capture reference patterns at the marked positions.');
   const [recentPattern, setRecentPattern] = useState<{ region: SpatialRegion; values: NineReadings } | null>(null);
   const [voiceOn, setVoiceOn] = useState(() => speechSupported() && loadVoicePreference());
   const [wakeOn, setWakeOn] = useState(() => listeningSupported() && loadWakePreference());
@@ -338,7 +351,6 @@ export function TrainerExperience() {
   const coughRef = useRef(cough);
   const cprRef = useRef(cpr);
   const cprTiming = useRef(initialCprTiming());
-  const spatialSamplesRef = useRef(spatialSamples);
   const mounted = useRef(true);
   const voiceRef = useRef(voiceOn);
   const listener = useRef<VoiceListener | null>(null);
@@ -350,9 +362,9 @@ export function TrainerExperience() {
   countsRef.current = counts;
   baselineRef.current = baseline;
   thresholdRef.current = threshold;
-  spatialSamplesRef.current = spatialSamples;
   voiceRef.current = voiceOn;
-  const phase: GuidePhase = scenario === 'severe'
+  const chokingSequence = scenario === 'severe' || (scenario === 'cough' && cough.phase === 'done');
+  const phase: GuidePhase = chokingSequence
     ? (counts.back < 5 ? 'back' : counts.front < 5 ? 'front' : 'review')
     : scenario === 'unresponsive' ? 'cpr' : cough.phase === 'observe' ? 'cough' : 'coughFailing';
   const coughFailing = scenario === 'cough' && cough.phase === 'failing';
@@ -429,6 +441,17 @@ export function TrainerExperience() {
 
   function evaluate(event: DetectedAction) {
     const scenarioNow = scenarioRef.current;
+
+    // During CPR, a hard compression flexes the mannequin and can spike the
+    // nearest abdomen pad. An abdomen hit that overlaps a sternum press (or
+    // ends while the sternum is still loaded) is that bleed, not hands too low.
+    if (scenarioNow === 'unresponsive' && event.type === 'front') {
+      const sternumLoaded = latestValues.current[8] - baselineRef.current[8] > releaseLevel(thresholdRef.current);
+      if (sternumLoaded || cprTiming.current.sternumActiveAt >= event.time - event.durationMs - CPR_BLEED_SLACK_MS) {
+        console.debug('[cpr] ignored abdomen contact during a compression (bleed)');
+        return;
+      }
+    }
     const nextCounts = { ...countsRef.current };
     let result: Feedback;
     let good = false;
@@ -440,13 +463,13 @@ export function TrainerExperience() {
         event.type,
         event.pattern,
         baselineRef.current,
-        spatialSamplesRef.current,
+        SPATIAL_SAMPLES,
       );
       setRecentPattern({ region: event.type, values: event.pattern });
     }
 
 
-    if (scenarioNow === 'cough') {
+    if (scenarioNow === 'cough' && coughRef.current.phase !== 'done') {
       const state = coughRef.current;
 
       if (state.phase === 'observe') {
@@ -457,13 +480,6 @@ export function TrainerExperience() {
           heading: 'Hands off — the cough is working',
           detail: 'Back blows and abdominal thrusts are for a cough that has failed. Encourage them to keep coughing. The observation timer has restarted.',
           spoken: 'Hands off. Let them keep coughing.',
-        };
-      } else if (state.phase === 'done') {
-        ambiguous = true;
-        result = {
-          tone: 'neutral',
-          heading: 'Scenario complete',
-          detail: 'Continue to severe choking to practise the full sequence, or reset to try this scenario again.',
         };
       } else if (event.type !== 'back') {
         updateCough({ ...state, wrongActions: state.wrongActions + 1 });
@@ -502,10 +518,13 @@ export function TrainerExperience() {
           responseMs: Math.max(0, event.time - event.durationMs - state.since),
         });
         updateCough({ ...state, phase: 'done', result: outcome });
+        // This blow is also back blow 1 of the severe-choking sequence that follows.
+        nextCounts.back += 1;
+        lastStart.current.back = event.time - event.durationMs;
         result = {
           tone: outcome.grade === 'Needs work' ? 'warning' : 'success',
-          heading: `Cough scenario graded · ${outcome.score}/100`,
-          detail: outcome.notes.join(' '),
+          heading: `Cough response graded · ${outcome.score}/100`,
+          detail: `${outcome.notes.join(' ')} That was back blow 1 of 5: keep going.`,
           spoken: 'Good. Keep going with back blows.',
         };
       }
@@ -520,6 +539,20 @@ export function TrainerExperience() {
           heading: event.type === 'front' ? 'Too low — that is the abdomen' : 'Compressions go on the front of the chest',
           detail: 'Place the heel of your hand on the centre of the chest, on the lower half of the breastbone.',
           spoken: event.type === 'front' ? 'Too low. Move up to the centre of the chest.' : 'Move to the centre of the chest.',
+        };
+      } else if (event.peak < CPR_SETTINGS.minPeakAdc) {
+        // Too light to be a compression. It still sets the rhythm, so the
+        // next real compression's interval isn't stretched across it.
+        timing.lastStart = event.time - event.durationMs;
+        timing.lastPeak = event.peak;
+        timing.trough = Infinity;
+        const coach = event.time - timing.lastCoach >= CPR_COACH_GAP_MS;
+        if (coach) timing.lastCoach = event.time;
+        result = {
+          tone: 'warning',
+          heading: 'Push harder — not counted',
+          detail: `That press reached ${Math.round(event.peak)} above rest; a compression needs ${CPR_SETTINGS.minPeakAdc}. Push hard and fast, straight down on the centre of the chest.`,
+          spoken: coach ? 'Push harder.' : undefined,
         };
       } else {
         good = true;
@@ -716,13 +749,18 @@ export function TrainerExperience() {
       contactTimer.current = null;
     }, 1300);
 
-    if (good && scenarioNow === 'severe' && nextCounts.back === 5 && nextCounts.front === 0) {
+    if (good && (scenarioNow === 'severe' || scenarioNow === 'cough') && nextCounts.back === 5 && nextCounts.front === 0) {
       setViewOverride(null);
     }
   }
 
   const processFrame = useCallback((frame: NineFrame) => {
     if (!mounted.current) return;
+    // CPR only uses the front of the mannequin, so a faulty or bumped back
+    // pad mustn't register as contact. Calibrate and Sensor test still see it.
+    if (modeRef.current === 'train' && scenarioRef.current === 'unresponsive') {
+      frame = withoutBackSensors(frame, baselineRef.current);
+    }
     const vals = frame.readings;
     latestValues.current = vals;
     setReadings(vals);
@@ -741,6 +779,10 @@ export function TrainerExperience() {
           const signal = Math.max(0, vals[8] - baselineRef.current[8]);
           // Lowest sternum signal since the last compression, for the recoil check.
           timing.trough = Math.min(timing.trough, signal);
+          // Frame peak, so a brief compression still counts as the sternum being pressed.
+          if (Math.max(vals[8], frame.peaks[8]) - baselineRef.current[8] >= thresholdRef.current) {
+            timing.sternumActiveAt = now;
+          }
           // Pressure that never lets off means leaning: the detector sees one long
           // press and no compressions register, so warn while it's happening.
           if (signal <= releaseLevel(thresholdRef.current)) {
@@ -1072,51 +1114,8 @@ export function TrainerExperience() {
     baselineRef.current = newBaseline;
     setBaseline(newBaseline);
     detector.current.reset();
-    spatialSamplesRef.current = emptySpatialSamples();
-    setSpatialSamples(spatialSamplesRef.current);
     setCalibrated(true);
     setFeedback({ tone: 'success', heading: 'Resting baseline captured', detail: 'Nine-channel baseline saved for this session. Validate each sensor individually in Sensor Test and adjust sensitivity as necessary.' });
-  }
-
-  function captureSpatialReference(region: SpatialRegion, id: SensorId) {
-    const reference = connection === 'live'
-      ? (() => {
-          const window = readingWindow.current.slice(-15);
-          const values = empty();
-
-          for (let index = 0; index < 9; index++) {
-            values[index] = Math.max(
-              baselineRef.current[index],
-              ...window.map(row => row[index]),
-            );
-          }
-
-          return values;
-        })()
-      : simulatedContact(id, baselineRef.current);
-
-    const pattern = signalPattern(reference, baselineRef.current, region);
-
-    if (Math.max(...pattern) < thresholdRef.current) {
-      setCalibrationMessage('No clear contact recorded. Hold pressure at the labelled location and try again.');
-      return;
-    }
-
-    const updated: SpatialSamples = {
-      ...spatialSamplesRef.current,
-      [region]: {
-        ...spatialSamplesRef.current[region],
-        [id]: pattern,
-      },
-    };
-
-    spatialSamplesRef.current = updated;
-    setSpatialSamples(updated);
-    setCalibrationMessage(
-      `${SENSOR_NAMES[id]} saved. ${hasSpatialCalibration(region, updated)
-        ? 'Spatial calibration is ready for this region.'
-        : 'Capture the remaining labelled locations to complete calibration.'}`,
-    );
   }
 
   function nextRound() {
@@ -1135,10 +1134,6 @@ export function TrainerExperience() {
       scenario, connection, counts, thresholdADCAboveBaseline: threshold,
       baseline, events: history,
       coughResult: cough.result, cprCycles: cpr.cycles,
-      spatialCalibration: {
-        frontReferences: calibratedCount('front', spatialSamples),
-        backReferences: calibratedCount('back', spatialSamples),
-      },
       note: 'Training demonstration. FSR signals do not measure clinical force, CPR depth, or obstruction clearance.',
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
@@ -1151,10 +1146,7 @@ export function TrainerExperience() {
   if (phase === 'front') { promptTag = `ABDOMINAL THRUSTS · ${counts.front + 1} OF 5`; instruction = 'Practise abdominal thrust placement'; guide = 'Target: upper abdomen, above the navel'; }
   if (phase === 'review') { promptTag = 'ONE ROUND COMPLETE'; instruction = 'Reassess and continue as needed'; guide = 'Practice round recorded — not airway clearance'; }
   if (phase === 'cough') { promptTag = 'EFFECTIVE COUGH · OBSERVING'; instruction = 'Encourage them to keep coughing'; guide = 'Hands off: no sensor contact in this step'; }
-  if (phase === 'coughFailing') {
-    if (cough.phase === 'done') { promptTag = 'SCENARIO COMPLETE'; instruction = 'Cough scenario graded'; guide = 'Continue to severe choking for the full sequence'; }
-    else { promptTag = 'COUGH FAILING · ACT NOW'; instruction = 'Start back blows'; guide = 'Target: between the shoulder blades'; }
-  }
+  if (phase === 'coughFailing') { promptTag = 'COUGH FAILING · ACT NOW'; instruction = 'Start back blows'; guide = 'Target: between the shoulder blades'; }
   if (phase === 'cpr') { promptTag = `CPR · CYCLE ${cpr.cycles.length + 1} · ${cpr.current.length} OF ${CPR_SETTINGS.cycleLength}`; instruction = 'Give chest compressions'; guide = 'Target: centre of chest, 100–120 per minute'; }
 
   if (assessmentRunning && phase === 'cpr') {
@@ -1177,18 +1169,17 @@ export function TrainerExperience() {
     const last = lastCycle ? ` Last cycle scored ${lastCycle.score}/100: ${lastCycle.notes.join(' ')}` : '';
     return `Cycle ${cpr.cycles.length + 1}: ${cpr.current.length}/${CPR_SETTINGS.cycleLength} compressions, ${rate}${recoil}.${last}`;
   }
+  const chokingProgress = `Round ${counts.rounds + 1}: ${counts.back}/5 back blows, ${counts.front}/5 abdominal thrusts. ${counts.correct} on target, ${counts.errors} needing correction.`;
   function coughProgress() {
     if (cough.phase === 'observe') return `Observing an effective cough, hands off. ${cough.interventions} early interventions so far.`;
     if (cough.phase === 'failing') return `The cough has failed ${(coughElapsed / 1000).toFixed(0)} s ago; the trainee should be giving back blows now.`;
-    return `Scenario graded ${cough.result?.score}/100: ${cough.result?.notes.join(' ')}`;
+    return `Cough response graded ${cough.result?.score}/100: ${cough.result?.notes.join(' ')} Now continuing as severe choking. ${chokingProgress}`;
   }
   assistantContext.current = {
     scenario: scenario === 'severe' ? 'Adult severe choking (responsive)' : scenario === 'cough' ? 'Adult mild obstruction with an effective cough that fails partway through' : 'Unresponsive adult, CPR compression practice (rate, recoil and placement graded; not depth)',
     step: promptTag,
     instruction: `${instruction}. Steps: ${howTo.steps.join('; ')}. ${guide}.`,
-    progress: scenario === 'severe'
-      ? `Round ${counts.rounds + 1}: ${counts.back}/5 back blows, ${counts.front}/5 abdominal thrusts. ${counts.correct} on target, ${counts.errors} needing correction.`
-      : scenario === 'unresponsive' ? cprProgress() : coughProgress(),
+    progress: scenario === 'severe' ? chokingProgress : scenario === 'unresponsive' ? cprProgress() : coughProgress(),
     lastFeedback: `${feedback.heading}. ${feedback.detail}`,
     // Peak ADC is left out on purpose: it isn't force, and Gemini would read it as such.
     recentHits: [...history].reverse().map((hit, index) => {
@@ -1219,9 +1210,9 @@ export function TrainerExperience() {
 
   const spatialHeatmap = useMemo(
     () => heatmapInput
-      ? estimatePlacement(heatmapRegion, heatmapInput, baseline, spatialSamples)
+      ? estimatePlacement(heatmapRegion, heatmapInput, baseline, SPATIAL_SAMPLES)
       : null,
-    [heatmapRegion, heatmapInput, baseline, spatialSamples],
+    [heatmapRegion, heatmapInput, baseline],
   );
 
 
@@ -1232,7 +1223,7 @@ export function TrainerExperience() {
     ? null
     : active <= 4 ? 'front' : active <= 7 ? 'back' : 'cpr';
   const livePhaseEstimate = phaseRegion && activeRegion === phaseRegion
-    ? estimatePlacement(phaseRegion, readings, baseline, spatialSamples)
+    ? estimatePlacement(phaseRegion, readings, baseline, SPATIAL_SAMPLES)
     : null;
   const liveAmbiguous = phaseRegion !== null &&
     activeRegion === phaseRegion && livePhaseEstimate?.uncertainty === 'broad';
@@ -1320,7 +1311,7 @@ export function TrainerExperience() {
               Heatmap estimates contact from nearby sensors.</div>
           </article>
           <article className="instruction-panel learning-coach-panel">
-            <div className="instruction-top"><span className="instruction-step">NEXT ACTION</span><span className="round-label">{scenario === 'severe' ? `ROUND ${counts.rounds + 1}` : 'PRACTICE'}</span></div>
+            <div className="instruction-top"><span className="instruction-step">NEXT ACTION</span><span className="round-label">{chokingSequence ? `ROUND ${counts.rounds + 1}` : 'PRACTICE'}</span></div>
             <span className="step-tag">{promptTag}</span>
             <h2>{instruction}</h2>
             <ol className="step-list">{howTo.steps.map(step => <li key={step}>{step}</li>)}</ol>
@@ -1329,7 +1320,7 @@ export function TrainerExperience() {
               <span className="placement-inline-dot" aria-hidden="true" />
               <div className="placement-inline-copy"><strong>{activeHint ? liveAmbiguous ? 'Placement uncertain' : activeWrong ? 'Adjust placement' : 'Contact detected' : feedback.heading}</strong><span>{activeHint ?? feedback.detail}</span></div>
             </div>
-            {(phase === 'review' || (scenario === 'cough' && cough.phase === 'done')) && <button type="button" className="quiet-button learning-transition" onClick={() => phase === 'review' ? nextRound() : resetSession('severe')}>{phase === 'review' ? 'Start another practice round →' : 'Continue with severe choking →'}</button>}
+            {phase === 'review' && <button type="button" className="quiet-button learning-transition" onClick={nextRound}>Start another practice round →</button>}
             <div className="gemini-inline" aria-label="Gemini voice coach">
               <div className="gemini-inline-head"><strong><span aria-hidden="true">✦</span> Gemini coach</strong>{listeningSupported() && <label className="gemini-wake-toggle"><input type="checkbox" checked={wakeOn} onChange={toggleWake} /> Wake word</label>}</div>
               {listeningSupported() ? <button type="button" className="gemini-inline-mic" disabled={thinking} onClick={() => listener.current?.ask()}><Mic />{thinking ? 'Gemini is responding…' : listenStatus === 'listening' ? 'Tap to send' : 'Ask Gemini'}</button> : <span className="gemini-inline-status">Speech recognition unavailable in this browser.</span>}
@@ -1338,7 +1329,7 @@ export function TrainerExperience() {
             </div>
           </article>
           <article className="placement-score-panel" aria-label={scenario === 'unresponsive' ? 'CPR cycle assessment' : scenario === 'cough' ? 'Cough scenario assessment' : 'Accuracy assessment for back and abdominal placement'}>
-            {scenario === 'severe' && <>
+            {chokingSequence && <>
               <div className="scoreboard-header"><span className="small-label">ACCURACY ASSESSMENT</span><strong>Back + abdomen</strong></div>
               {([{ region: 'back', label: 'Back blows', data: backPlacement }, { region: 'front', label: 'Abdominal thrusts', data: frontPlacement }] as const).map(item => (
                 <section key={item.region} className={`regional-score ${item.region}`}>
@@ -1389,7 +1380,7 @@ export function TrainerExperience() {
                 {cough.result && <ResultCard title="COUGH SCENARIO RESULT" result={cough.result} />}</div>
             </>}
             <div className="scoreboard-footer"><span>{active === null ? 'Waiting for contact' : `Live: ${SENSOR_NAMES[active]}`}</span><button type="button" className="text-button" onClick={downloadSummary}>Export results ↓</button></div>
-            {scenario === 'severe' && <p className="scoreboard-disclaimer">Scores estimate placement using sparse FSR readings; they do not measure force or clinical effectiveness.</p>}
+            {chokingSequence && <p className="scoreboard-disclaimer">Scores estimate placement using sparse FSR readings; they do not measure force or clinical effectiveness.</p>}
           </article>
         </section>
         <section className="bottom-rhythm-section" aria-label="Rhythm assessment">
@@ -1410,7 +1401,7 @@ export function TrainerExperience() {
               inputRef={gameInputRef}
               baseline={baseline}
               threshold={threshold}
-              spatialSamples={spatialSamples}
+              spatialSamples={SPATIAL_SAMPLES}
               enabled={scenario === 'severe' || scenario === 'unresponsive'}
               onActiveChange={onAssessmentActiveChange}
               onPlacementScore={recordAssessmentPlacement}
@@ -1453,36 +1444,6 @@ export function TrainerExperience() {
           <div className="baseline-grid">{SENSOR_NAMES.map((name, i) => <div key={name}>
             <span>{name}</span>
             <strong>{baseline[i]}</strong></div>)}
-          </div>
-          <div className="spatial-calibration">
-            <div className="workspace-head compact">
-              <h3>Spatial reference calibration</h3>
-              <span>Improves the multi-sensor placement model</span>
-            </div>
-            <p className="tiny-note">For each labelled location, apply pressure there and click Capture while holding it. In Demo mode, buttons generate clearly labelled synthetic references. Calibrate each position on the actual mannequin before trusting physical feedback.</p>
-            {(['back', 'front'] as const).map(region => (
-              <div key={region} className="spatial-cal-group">
-                <div className="spatial-cal-group-header">
-                  <strong>{region === 'back' ? 'Back placement' : 'Abdominal placement'}</strong>
-                  <span>{calibratedCount(region, spatialSamples)}/{SPATIAL_REFERENCES[region].length} references</span>
-                </div>
-                {SPATIAL_REFERENCES[region].map(reference => (
-                  <div key={reference.id} className="spatial-cal-row">
-                    <span>{SENSOR_NAMES[reference.id]}</span>
-                    <button type="button" className="button-outline small" onClick={() => captureSpatialReference(region, reference.id)}>
-                      {spatialSamples[region][reference.id] ? 'Recapture' : connection === 'live' ? 'Capture' : 'Simulate'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ))}
-            <div className="cal-status" role="status">{calibrationMessage}</div>
-            <button type="button" className="button-outline small" onClick={() => {
-              const cleared = emptySpatialSamples();
-              spatialSamplesRef.current = cleared;
-              setSpatialSamples(cleared);
-              setCalibrationMessage('Spatial references cleared.');
-            }}>Clear spatial references</button>
           </div>
           <div className="tip-line">ⓘ Repeat calibration after repositioning the hardware or changing resistor wiring. Calibrate medical technique separately with an instructor.</div></div></section>}
 

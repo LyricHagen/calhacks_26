@@ -3,11 +3,12 @@
  * Every note is one separate, brief contact; never require sustained force.
  */
 import type { NineReadings } from '../trainerLab/sensors';
+import { CPR_SETTINGS } from '../trainerLab/grading';
 
 export type AssessmentRegion = 'back' | 'front';
 export type ContactRegion = AssessmentRegion | 'cpr';
 export type AssessmentMode = 'choking' | 'cpr';
-export type Verdict = 'perfect' | 'good' | 'okay' | 'wrong-area' | 'wrong-duration' | 'miss';
+export type Verdict = 'perfect' | 'good' | 'okay' | 'wrong-area' | 'wrong-duration' | 'too-light' | 'miss';
 export type AssessmentNote = {
   id: number;
   region: ContactRegion;
@@ -32,6 +33,8 @@ export type AssessedContact = {
   durationMs: number;
   region: ContactRegion;
   pattern: NineReadings;
+  // Strongest reading above rest in the contacted region, at its peak frame.
+  peak: number;
 };
 export type PlacementCheck = { score: number; uncertainty: 'narrow' | 'moderate' | 'broad' } | null;
 
@@ -113,7 +116,7 @@ export function nextAssessmentRegion(state: AssessmentState): AssessmentRegion {
 export function assessmentAccuracy(state: AssessmentState): number {
   const judged = state.notes.filter(note => note.verdict);
   if (!judged.length) return 0;
-  const points = { perfect: 1, good: .75, okay: .45, 'wrong-area': 0, 'wrong-duration': 0, miss: 0 };
+  const points = { perfect: 1, good: .75, okay: .45, 'wrong-area': 0, 'wrong-duration': 0, 'too-light': 0, miss: 0 };
   return Math.round(judged.reduce((sum, note) => sum + points[note.verdict!], 0) * 100 / judged.length);
 }
 
@@ -138,7 +141,7 @@ export function applyVerdict(state: AssessmentState, id: number, verdict: Verdic
     score,
     combo,
     maxCombo: Math.max(state.maxCombo, combo),
-    feedback: verdict === 'wrong-area' ? 'WRONG AREA' : verdict === 'wrong-duration' ? 'DURATION' : verdict.toUpperCase(),
+    feedback: verdict === 'wrong-area' ? 'WRONG AREA' : verdict === 'wrong-duration' ? 'DURATION' : verdict === 'too-light' ? 'TOO LIGHT' : verdict.toUpperCase(),
     feedbackDetail: detail,
     feedbackId: state.feedbackId + 1,
   };
@@ -164,6 +167,10 @@ export function judgeAssessmentContact(
     : contact.region === closest.region && !!placement && placement.uncertainty !== 'broad' && placement.score >= acceptanceScore;
   if (!placed) {
     return applyVerdict(state, closest.id, 'wrong-area', 'Contact did not match the target region or placement was uncertain.', contact);
+  }
+  // Same bar as Practice: a light touch on the sternum isn't a compression.
+  if (closest.region === 'cpr' && contact.peak < CPR_SETTINGS.minPeakAdc) {
+    return applyVerdict(state, closest.id, 'too-light', `Peaked ${Math.round(contact.peak)} above rest; a compression needs ${CPR_SETTINGS.minPeakAdc}. Push harder.`, contact);
   }
   const { minMs: min, maxMs: max, perfectMs, goodMs } = windowsFor(closest.region);
   if (contact.durationMs < min || contact.durationMs > max) {
@@ -237,6 +244,7 @@ export class AssessmentContactDetector {
     const back = Math.max(...relative.slice(5, 8));
     const cpr = relative[8];
     const region: ContactRegion = cpr > Math.max(front, back) ? 'cpr' : back > front ? 'back' : 'front';
-    return { startedMs, endedMs, durationMs: Math.max(0, endedMs - startedMs), region, pattern };
+    const peak = region === 'cpr' ? cpr : region === 'back' ? back : front;
+    return { startedMs, endedMs, durationMs: Math.max(0, endedMs - startedMs), region, pattern, peak };
   }
 }
