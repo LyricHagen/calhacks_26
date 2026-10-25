@@ -694,6 +694,22 @@ export function TrainerExperience() {
   }
   openPortRef.current = openPort;
 
+  // Always available: drop the current connection (if any) and reopen the
+  // approved board, or fall back to the picker if there isn't one.
+  async function reconnect() {
+    const serial = (navigator as SerialNavigator).serial;
+    if (!serial || !paired) { await connect(); return; }
+    try { await readerRef.current?.cancel(); } catch {}
+    // Wait for the read loop to close the port before opening it again.
+    for (let waited = 0; portBusy.current && waited < 3000; waited += 50) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const ports = await serial.getPorts();
+    if (!mounted.current) return;
+    if (ports[0]) await openPort(ports[0]);
+    else { setPaired(false); await connect(); }
+  }
+
   // Reconnect without a click: on load to a board approved before, and
   // whenever an approved board is plugged in.
   useEffect(() => {
@@ -916,7 +932,7 @@ export function TrainerExperience() {
       <div className="top-actions">
         {speechSupported() && <button type="button" className="connect-button" onClick={toggleVoice} aria-pressed={voiceOn} title="Speak feedback aloud"><Speaker on={voiceOn} />{voiceOn ? 'Voice on' : 'Voice off'}</button>}
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
-        {!paired && <button type="button" className="connect-button" onClick={() => { void connect(); }} disabled={connection === 'connecting'}><Usb />Connect sensor</button>}
+        <button type="button" className="connect-button" onClick={() => { void reconnect(); }} disabled={connection === 'connecting'}><Usb />{paired ? 'Reconnect' : 'Connect sensor'}</button>
       </div>
     </header>
     <main className="container">
