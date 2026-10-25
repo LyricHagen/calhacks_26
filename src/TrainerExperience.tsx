@@ -260,6 +260,38 @@ function BodyDiagram({
   </div>;
 }
 
+// Live force on one pad, game-style: pops in while the pad is pressed, follows
+// the reading, then lingers briefly after release before fading out.
+const FORCE_LINGER_MS = 700;
+function ForcePop({ label, side, id, readings, baseline, threshold }: {
+  label: string; side: 'left' | 'right'; id: SensorId;
+  readings: NineReadings; baseline: NineReadings; threshold: number;
+}) {
+  const pressed = readings[id] - baseline[id] >= threshold;
+  const [shown, setShown] = useState<{ text: string; hit: number } | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const hits = useRef(0);
+  const wasPressed = useRef(false);
+  useEffect(() => {
+    if (pressed) {
+      // A new press restarts the pop animation.
+      if (!wasPressed.current) hits.current += 1;
+      setShown({ text: formatForce(padNewtons(id, readings[id], baseline[id]), isSaturated(readings[id])), hit: hits.current });
+      setLeaving(false);
+    }
+    wasPressed.current = pressed;
+    if (pressed) return;
+    const fade = window.setTimeout(() => setLeaving(true), FORCE_LINGER_MS);
+    const hide = window.setTimeout(() => setShown(null), FORCE_LINGER_MS + 250);
+    return () => { window.clearTimeout(fade); window.clearTimeout(hide); };
+  }, [pressed, id, readings, baseline]);
+  if (!shown) return null;
+  return <div key={shown.hit} className={`force-pop ${side} ${leaving ? 'leaving' : ''}`} aria-live="off">
+    <span>{label}</span>
+    <strong>{shown.text}</strong>
+  </div>;
+}
+
 function ResultCard({ title, result }: { title: string; result: ScenarioResult }) {
   return <div className={`result-card ${result.grade === 'Needs work' ? 'weak' : ''}`}>
     <div className="result-card-head">
@@ -1306,6 +1338,10 @@ export function TrainerExperience() {
               severity={airwayOpen ? 1 : scenario === 'unresponsive' ? 3 : 2} />
             <div className="mannequin-guide">
               Heatmap estimates contact from nearby sensors.</div>
+            <div className="force-pops" aria-hidden="true">
+              <ForcePop label="Back" side="left" id={5} readings={readings} baseline={baseline} threshold={threshold} />
+              <ForcePop label="Navel" side="right" id={0} readings={readings} baseline={baseline} threshold={threshold} />
+            </div>
           </article>
           <article className="instruction-panel learning-coach-panel">
             <div className="instruction-top"><span className="instruction-step">NEXT ACTION</span><span className="round-label">{chokingSequence ? `ROUND ${counts.rounds + 1}` : 'PRACTICE'}</span></div>

@@ -1093,3 +1093,46 @@
 }
 /* Collapsed: just the heading row, without the hidden playfield's grid rows and gaps. */
 .compact-training-page .training-assessment-layout .bottom-rhythm-section > .rhythm-game-content > .assessment-panel.collapsed { display: block; }
+
+/* Live force pop-ups for the centre-back and navel pads. They sit in the
+   empty top corners of the mannequin panel, beside the neck, clear of the figure. */
+.force-pops { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.force-pop {
+  position: absolute;
+  top: 22%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: force-pop-in .32s cubic-bezier(.2, 1.6, .4, 1) both;
+  transition: opacity .25s ease, transform .25s ease;
+}
+.force-pop.left { left: clamp(14px, 4%, 36px); align-items: flex-start; }
+.force-pop.right { right: clamp(14px, 4%, 36px); align-items: flex-end; }
+.force-pop > span {
+  font-size: calc(11 * var(--px));
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #4f8a76;
+}
+.force-pop > strong {
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: calc(34 * var(--px));
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -.03em;
+  color: #0e9f73;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 0 #fff, 0 0 18px rgba(25, 200, 140, .35);
+}
+.force-pop.leaving { opacity: 0; transform: translateY(-8px) scale(.94); }
+@keyframes force-pop-in {
+  0% { opacity: 0; transform: translateY(10px) scale(.55); }
+  60% { opacity: 1; transform: translateY(-3px) scale(1.12); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .force-pop { animation: none; transition: none; }
+}
+/* Long live-sensor names truncate instead of running past the card edge. */
+.compact-training-page .scoreboard-footer > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
