@@ -141,14 +141,12 @@ function BodyDiagram({
   const coords = view === 'front' ? FRONT_COORDS : BACK_COORDS;
   const figure = FIGURES[view];
   const focusY = view === 'back' ? 190 : cpr ? 182 : 292;
-  const activePosition = coords.find(item => item.id === active);
-  const targetPosition = coords.find(item => item.id === target);
+  const targetPosition = coords.find(item => item.id === target || (cpr && item.id === 8));
   return <div className="body-stage">
     <svg className={`body-illustration lvl-${severity} ${active !== null ? 'impact' : ''}`} viewBox="-32 0 432 428" role="img" aria-label={`Interactive ${view} view of training mannequin with force sensor locations`}>
       <defs>
         <filter id="bodyShadow"><feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#70472f" floodOpacity=".12" /></filter>
-        <clipPath id="heatmapBodyClip"><path d={figure.torso} /></clipPath>
-        <linearGradient id="figureFade" gradientUnits="userSpaceOnUse" x1="0" y1="352" x2="0" y2="390">
+        <clipPath id="heatmapBodyClip"><path d={figure.torso} /></clipPath>        <linearGradient id="figureFade" gradientUnits="userSpaceOnUse" x1="0" y1="352" x2="0" y2="390">
           <stop offset="0" stopColor="#fff" /><stop offset="1" stopColor="#000" />
         </linearGradient>
         <mask id="figureMask" maskUnits="userSpaceOnUse" x="-32" y="-80" width="432" height="560"><rect x="-32" y="-80" width="432" height="560" fill="url(#figureFade)" /></mask>
@@ -159,6 +157,12 @@ function BodyDiagram({
         <path d={figure.details} fill="none" opacity=".4" />
       </g></g>
 
+      {/* Where to aim: one soft circle under the heat map (no sensor dots). */}
+      {targetPosition && <circle
+        cx={targetPosition.x} cy={targetPosition.y} r="34"
+        fill="none" stroke="#12a991" strokeOpacity=".45" strokeWidth="1.5"
+        className="target-zone" aria-hidden="true"
+      />}
       {heatmap && <g clipPath="url(#heatmapBodyClip)" className="spatial-heatmap">
         {heatmap.cells.filter(cell => cell.probability > 0.05).map(cell => (
           <rect
@@ -171,41 +175,20 @@ function BodyDiagram({
             opacity={Math.min(0.85, Math.pow(cell.probability, 0.7) * 0.78)}
           />
         ))}
-        <circle
-          cx={heatmap.estimate.x}
-          cy={heatmap.estimate.y}
-          r="4"
-          className="estimate-centre"
-        />
       </g>}
-      {coords.map(({ id, x, y }) => {
-        const isTarget = id === target || (cpr && id === 8);
-        const isActive = id === active;
-        return <g key={id} className="svg-pad" onClick={() => onSensor(id)}>
+      {/* Sensors aren't drawn (the heat map shows contact), but each keeps an
+          invisible hit area so demo mode can still simulate a press there. */}
+      {coords.map(({ id, x, y }) => (
+        <g key={id} className="svg-pad" onClick={() => onSensor(id)}>
           <title>{SENSOR_NAMES[id]} — click to simulate contact</title>
-          {isTarget && <circle cx={x} cy={y} r="29" fill="none" stroke="#04877b" strokeDasharray="5 7" strokeWidth="2.5" className="target-orbit" />}
-          <circle cx={x} cy={y} r={isActive ? 24 : isTarget ? 20 : 14} className={`body-pad ${isActive ? (wrong ? 'is-wrong' : 'is-active') : ''} ${isTarget ? 'is-target' : ''}`} />
-          <circle cx={x} cy={y} r="6" fill={isActive || isTarget ? '#fff' : '#c2b0a2'} opacity=".9" />
-        </g>;
-      })}
+          <circle cx={x} cy={y} r="18" fill="transparent" />
+        </g>
+      ))}
       {target !== null && coords.some(c => c.id === target) && <g className="target-label">
         <rect x="252" y={focusY - 22} width="104" height="34" rx="16" fill="#e5f7ef" stroke="#a1dbc7" />
         <text x="304" y={focusY - 1} fill="#08786b" fontWeight="700" fontSize="12" textAnchor="middle">TARGET AREA</text>
         <path d={`M252 ${focusY - 5} H233`} stroke="#08786b" strokeWidth="1.5" strokeDasharray="3 4" />
       </g>}
-      {wrong && activePosition && targetPosition && activePosition.id !== targetPosition.id && (
-        <g className="correction-guide" aria-hidden="true">
-          <path
-            d={`M${activePosition.x} ${activePosition.y} L${targetPosition.x} ${targetPosition.y}`}
-            fill="none"
-            stroke="#df655c"
-            strokeWidth="3"
-            strokeDasharray="6 5"
-          />
-          <circle cx={targetPosition.x} cy={targetPosition.y} r="5" fill="#007e79" />
-        </g>
-      )}
-      {active !== null && coords.some(c => c.id === active) && <circle key={flash} cx={coords.find(c => c.id === active)!.x} cy={coords.find(c => c.id === active)!.y} r="39" className="contact-ripple" fill="none" stroke={wrong ? '#df655c' : '#0eab93'} strokeWidth="3" />}
       </g>
     </svg>
     <span className="anatomy-credit">Illustrative anatomy · sensor positions schematic</span>
