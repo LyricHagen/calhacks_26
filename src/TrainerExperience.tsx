@@ -39,7 +39,14 @@ type SerialPort = {
   close: () => Promise<void>;
   readable: ReadableStream<Uint8Array> | null;
 };
-type SerialNavigator = Navigator & { serial?: { requestPort: () => Promise<SerialPort> } };
+type SerialApi = {
+  requestPort: () => Promise<SerialPort>;
+  // Boards this site was already allowed to use; no prompt needed.
+  getPorts: () => Promise<SerialPort[]>;
+  addEventListener: (type: 'connect', listener: (event: Event) => void) => void;
+  removeEventListener: (type: 'connect', listener: (event: Event) => void) => void;
+};
+type SerialNavigator = Navigator & { serial?: SerialApi };
 
 const INITIAL_COUNTS: Counts = { back: 0, front: 0, cpr: 0, correct: 0, errors: 0, rounds: 0 };
 // Start-to-start pacing window for back blows or abdominal thrusts. Training pace, not an AHA figure.
@@ -232,6 +239,8 @@ export function TrainerExperience() {
   const [history, setHistory] = useState<History[]>([]);
   const [feedback, setFeedback] = useState<Feedback>(startFeedback);
   const [connection, setConnection] = useState<Connection>('demo');
+  // Has this browser approved a board before? Then no Connect button is needed.
+  const [paired, setPaired] = useState(false);
   const [connectionDetail, setConnectionDetail] = useState('');
   const [viewOverride, setViewOverride] = useState<View | null>(null);
   const [advanced, setAdvanced] = useState(false);
@@ -256,6 +265,8 @@ export function TrainerExperience() {
   const detector = useRef(new NineSensorDetector());
   const protocol = useRef(new NineSensorProtocol());
   const serialPort = useRef<SerialPort | null>(null);
+  const portBusy = useRef(false);
+  const openPortRef = useRef<(port: SerialPort) => Promise<void>>(async () => { });
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const readingWindow = useRef<NineReadings[]>([]);
   const latestValues = useRef<NineReadings>(empty());
@@ -610,15 +621,33 @@ export function TrainerExperience() {
     }, 240);
   }
 
+  // First time only: Chrome needs a click to show its device picker. After
+  // that the board is remembered and openPort() runs on its own.
   async function connect() {
     const serial = (navigator as SerialNavigator).serial;
     if (!serial) {
       setConnection('error'); setConnectionDetail('Web Serial requires Chrome or Edge on desktop, with HTTPS or localhost. Use Demo without a board.'); return;
     }
-    if (connection === 'live' || connection === 'connecting') return;
+    if (portBusy.current) return;
     setConnection('connecting'); setConnectionDetail('Choose the ESP32-S3 USB serial device.');
+    let port: SerialPort;
     try {
-      const port = await serial.requestPort();
+      port = await serial.requestPort();
+    } catch (err) {
+      if (!mounted.current) return;
+      setConnection('demo');
+      setConnectionDetail(err instanceof Error ? err.message : 'No board chosen.');
+      return;
+    }
+    setPaired(true);
+    await openPort(port);
+  }
+
+  async function openPort(port: SerialPort) {
+    if (portBusy.current) return;
+    portBusy.current = true;
+    setConnection('connecting'); setConnectionDetail('Connecting to the ESP32…');
+    try {
       await port.open({ baudRate: 115200 });
       serialPort.current = port;
       protocol.current = new NineSensorProtocol();
@@ -650,20 +679,38 @@ export function TrainerExperience() {
         if (readerRef.current === reader) readerRef.current = null;
         try { await port.close(); } catch {}
         if (serialPort.current === port) serialPort.current = null;
-        if (mounted.current) setConnection('demo');
+        if (mounted.current) {
+          setConnection('demo');
+          setConnectionDetail('Board disconnected. It reconnects automatically when plugged back in.');
+        }
       }
     } catch (err) {
       if (!mounted.current) return;
       setConnection(serialPort.current ? 'live' : 'error');
       setConnectionDetail(err instanceof Error ? err.message : 'Could not connect to ESP32.');
+    } finally {
+      portBusy.current = false;
     }
   }
+  openPortRef.current = openPort;
 
-  async function disconnect() {
-    try { await readerRef.current?.cancel(); } catch {}
-    setConnection('demo');
-    setConnectionDetail('Disconnected. Demo mode is available.');
-  }
+  // Reconnect without a click: on load to a board approved before, and
+  // whenever an approved board is plugged in.
+  useEffect(() => {
+    const serial = (navigator as SerialNavigator).serial;
+    if (!serial) return;
+    void serial.getPorts().then(ports => {
+      if (!mounted.current) return;
+      setPaired(ports.length > 0);
+      if (ports[0]) void openPortRef.current(ports[0]);
+    });
+    const onConnect = (event: Event) => {
+      setPaired(true);
+      void openPortRef.current(event.target as unknown as SerialPort);
+    };
+    serial.addEventListener('connect', onConnect);
+    return () => serial.removeEventListener('connect', onConnect);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -869,7 +916,7 @@ export function TrainerExperience() {
       <div className="top-actions">
         {speechSupported() && <button type="button" className="connect-button" onClick={toggleVoice} aria-pressed={voiceOn} title="Speak feedback aloud"><Speaker on={voiceOn} />{voiceOn ? 'Voice on' : 'Voice off'}</button>}
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
-        <button type="button" className="connect-button" onClick={connection === 'live' ? () => { void disconnect(); } : () => { void connect(); }} disabled={connection === 'connecting'}><Usb />{connection === 'live' ? 'Disconnect' : 'Connect sensor'}</button>
+        {!paired && <button type="button" className="connect-button" onClick={() => { void connect(); }} disabled={connection === 'connecting'}><Usb />Connect sensor</button>}
       </div>
     </header>
     <main className="container">
