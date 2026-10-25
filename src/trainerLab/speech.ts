@@ -33,6 +33,13 @@ export const PRELOAD_CUES = [
   'Round complete. Reassess.',
   'Stop. Encourage them to keep coughing.',
   'Move to the centre of the chest.',
+  'Hands off. Let them keep coughing.',
+  'Start with back blows.',
+  'Good. Keep going with back blows.',
+  'Push faster.',
+  'Slow down a little.',
+  'Let the chest come all the way up.',
+  'Too low. Move up to the centre of the chest.',
 ];
 
 export function speechSupported(): boolean {
