@@ -195,17 +195,20 @@ function BodyDiagram({
   </div>;
 }
 
+// Side profile traced from a head-and-throat reference: nasal cavity and pharynx in pink,
+// trachea in darker red in front of the oesophagus. Cough shows air moving up and out of
+// the mouth; the other scenarios show a lodged object at the top of the trachea.
 function Airway({ scenario }: { scenario: Scenario }) {
-  return <div className="airway-mini" aria-label={scenario === 'cough' ? 'Airflow illustrated through a patent airway' : 'Illustrated airway narrowing with obstruction'} role="img">
-    <svg viewBox="0 0 210 128" aria-hidden="true">
-      <defs><linearGradient id="headShading" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#f2d0b5" /><stop offset="1" stopColor="#d3a18a" /></linearGradient></defs>
-      <path d="M66 10 C30 12 23 43 32 62 L25 76 Q40 84 54 83 L62 117H122V61 Q120 17 75 10Z" fill="url(#headShading)" stroke="#c4957b" strokeWidth="1.4" />
-      <path d="M29 68L70 68 Q86 69 89 92V119" stroke="#c77e79" strokeWidth="16" fill="none" strokeLinecap="round" />
-      <path d="M29 68L70 68 Q86 69 89 92V119" stroke="#64363b" strokeWidth="7" fill="none" strokeLinecap="round" />
-      {scenario === 'cough' ? <path d="M33 68L72 68Q89 70 89 94V115" className="air-stream" /> : <><circle cx="87" cy="90" r="10" fill="#db8853" stroke="#b76539" strokeWidth="1.6" />
-        <path d="M114 90h40" stroke="#b76539" strokeWidth="1.6" strokeDasharray="3 4" /><text x="158" y="94" textAnchor="middle" fontSize="10" fill="#9c5636">blocked</text></>}
-      <text x="150" y="29" textAnchor="middle" fontSize="10" fontWeight="700" fill="#42685d">AIRWAY</text>
-      <text x="150" y="44" textAnchor="middle" fontSize="10" fill="#71867d">illustration</text>
+  const open = scenario === 'cough';
+  return <div className="airway-mini" aria-label={open ? 'Airflow illustrated through a partly open airway' : 'Illustrated airway blocked by an object'} role="img">
+    <svg viewBox="60 30 400 555" aria-hidden="true">
+      <path d="M160 585C180 560 205 545 205 520V448C180 440 135 442 118 432C102 422 98 400 106 382C98 372 96 360 104 352C94 345 92 333 98 322C84 316 66 306 72 294C86 270 102 246 108 218C110 180 130 112 190 70C240 36 330 34 390 78C440 118 452 200 440 270C430 320 400 350 380 372C372 420 378 500 392 585Z" fill={SKIN} stroke={SKIN_LINE} strokeWidth="5" strokeLinejoin="round" />
+      <path d="M86 300C100 262 132 230 172 228C204 226 220 258 250 270C272 280 282 300 282 330L290 585H262L258 470C254 440 246 420 248 395C250 360 240 322 222 306Z" fill="#eea39c" />
+      <path d="M152 372C126 360 130 330 160 326L222 322C240 322 246 340 238 352" fill="none" stroke="#eea39c" strokeWidth="12" strokeLinecap="round" />
+      <path d="M250 410C262 418 262 440 258 470L262 585H232C220 560 212 520 218 490C224 455 236 424 250 410Z" fill="#dc7b72" />
+      {open
+        ? <path d="M244 570C236 520 232 470 242 420C252 384 246 350 216 346L100 346" className="air-stream" />
+        : <circle cx="242" cy="446" r="17" fill="#e8a33d" stroke="#b76539" strokeWidth="5" />}
     </svg>
   </div>;
 }
@@ -1011,9 +1014,12 @@ export function TrainerExperience() {
               <div>
                 <strong>{counts.errors}</strong>
                 <span>Needs correction</span></div></div>
-            <div className="airway-row"><Airway scenario={scenario} />
-              <p><b>Airway concept</b>
-                <span>{scenario === 'cough' ? 'A strong cough can move air and may clear the obstruction.' : 'Illustration only. Sensor signals cannot detect airway clearance.'}</span></p></div>
+            <div className="airway-row">
+              <div className="airway-copy">
+                <span className="readout-label">AIRWAY · ILLUSTRATION</span>
+                <strong className={scenario === 'cough' ? 'airway-status open' : 'airway-status blocked'}>{scenario === 'cough' ? 'Partly blocked, air moving' : 'Blocked'}</strong>
+                <span>{scenario === 'cough' ? 'A strong cough can move air and may clear the obstruction.' : 'Sensor signals cannot detect whether the airway has cleared.'}</span></div>
+              <Airway scenario={scenario} /></div>
           </article>
         </section>
         <section className="action-strip">
