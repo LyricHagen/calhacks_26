@@ -1,70 +1,114 @@
-# Thrustworthy — guided mannequin trainer
+# Thrustworthy
 
-A single-page React + TypeScript training prototype for adult choking-response practice, with five abdominal FSRs, three back FSRs, and one sternum FSR. No server or API key is required for the simulated demo.
+A first-aid training station for adult choking response. A mannequin fitted with nine force-sensitive resistors (FSRs) streams readings over USB to a single-page React app. The app coaches the trainee through back blows, abdominal thrusts and CPR in real time. It gives placement, timing and sequence feedback, an estimated force in newtons, spoken cues, and a Gemini voice coach you can ask questions out loud.
 
-## Run the app
+No hardware is needed to try it: every sensor can be simulated from the UI.
+
+## Quick start
+
+Requires Node 22+.
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Open http://localhost:5173 in Chrome or Edge. Use **Guided training** for the interactive practice flow, **Calibrate** to capture resting readings, and **Sensor test** to check individual channels.
+Open http://localhost:5173 in **Chrome or Edge**. Web Serial and speech recognition only work in Chromium browsers.
 
-## Final physical sensor and GPIO mapping
+To turn on the Gemini voice and Q&A, copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`:
 
-| Serial index | Name | ESP32-S3 GPIO |
-|---|---|---|
-| 0 | Front abdomen target | 4 |
-| 1 | Front high | 5 |
-| 2 | Front low | 7 |
-| 3 | Front left | 15 |
-| 4 | Front right | 16 |
-| 5 | Centre back (target) | 9 |
-| 6 | Back left (off-target) | 3 |
-| 7 | Back right (off-target) | 8 |
-| 8 | Sternum (CPR) | 18 |
+```bash
+GEMINI_API_KEY=...
+GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts   # optional
+GEMINI_CHAT_MODEL=gemini-3.1-flash-lite         # optional
+```
 
-**Back left/right are defined from the point of view of a person facing the mannequin's back.** The back-view diagram places sensor 6 to the left and sensor 7 to the right of the central target.
+The key is read only by the Vite dev/preview server, which proxies `/api/tts` and `/api/ask` to Gemini, so it never ends up in the bundle. Without a key the app still works and falls back to the browser's built-in speech synthesis.
 
-## Hardware and protocol
+| Script | What it does |
+|---|---|
+| `npm run dev` | Dev server on port 5173 |
+| `npm run build` | Type-check, then build to `dist/` |
+| `npm run preview` | Serve the build (Gemini proxy included) |
 
-Current firmware: `firmware/chokesense_s3_9fsr/main.cpp`.
+## Features
 
-It streams newline-delimited JSON at 115200 baud in the format:
+**Practice** has three scenarios:
+
+- **Severe choking**: 5 back blows on the centre-back target, then 5 abdominal thrusts, then a check-in before the next round. Contacts that are off target, out of order, too close together (under 1 s), too far apart (over 3 s) or too slow to build up are flagged and don't count.
+- **Effective cough**: keep your hands off while the cough is still working. After 15 s with no contact the cough fails, and you're graded on holding back, how fast you start back blows, and whether you chose the right first action.
+- **Unresponsive / CPR**: compressions on the sternum sensor, graded per 30-compression cycle on rate (100–120/min), full recoil, staying on target and not stopping.
+
+The rest of the app:
+
+- **Body diagram**: animated front and back views with a live placement heatmap and an airway illustration that reacts to each contact. Click any sensor on the diagram to simulate a hit.
+- **Rhythm skill check**: a rhythm game where each note is a short back-blow or thrust contact, scored on timing and placement.
+- **Voice coaching**: spoken step instructions and corrections. Say "Gemini, …" or press **Ask Gemini** to ask a question; the answer takes into account where you are in the training.
+- **Calibrate**: capture a resting baseline, adjust contact sensitivity, and record spatial reference points for the placement model.
+- **Sensor test**: live and peak readings for all nine channels in raw ADC and approximate newtons, plus a test button for each one.
+- **Export results**: download the session as JSON (events, scores, calibration).
+
+## Hardware
+
+An ESP32-S3 (`esp32-s3-devkitc-1`) reads nine FSR 402 sensors. Each one is wired as a voltage divider: 3.3 V → FSR → ADC pin → 2.2 kΩ → GND.
+
+| Index | Key | Location | GPIO |
+|---|---|---|---|
+| 0 | `front_target` | Abdomen target | 4 |
+| 1 | `front_high` | Front, too high | 5 |
+| 2 | `front_low` | Front, too low | 7 |
+| 3 | `front_left` | Front left | 15 |
+| 4 | `front_right` | Front right | 16 |
+| 5 | `back_target` | Centre back, between shoulder blades | 9 |
+| 6 | `back_left` | Back left (off target) | 3 |
+| 7 | `back_right` | Back right (off target) | 8 |
+| 8 | `cpr_sternum` | Sternum (CPR) | 18 |
+
+Back left and right are from the point of view of someone facing the mannequin's back.
+
+Things to watch for:
+
+- GPIO3 is a strapping pin, so make sure its divider doesn't interfere with boot.
+- GPIO15, 16 and 18 are ADC2 pins, which conflict with Wi-Fi. The firmware only uses USB serial, so this is fine as long as Wi-Fi stays off.
+- Newton estimates use a power-law fit to the FSR 402 datasheet with the 2.2 kΩ divider. To correct them, measure each plate and set `PAD_SCALE` in `src/trainerLab/sensors.ts`.
+
+### Firmware
+
+`firmware/chokesense_s3_9fsr/main.cpp` samples every 5 ms. It sends a frame every 20 ms (50 Hz) and a `hello` message every 5 s. Messages are newline-delimited JSON at 115200 baud:
 
 ```json
+{"hello":"chokesense-9fsr","hz":50,"pads":["front_target","front_high", ...]}
 {"schema":"fsr9-v1","t":12000,"fsr":[0,0,0,0,0,1500,0,0,0],"peak":[0,0,0,0,0,2300,0,0,0]}
 ```
 
-Every connection also receives periodic `hello` messages declaring logical sensor names. The frontend matches physical channels to logical names from those messages. On every sensor, use a 3.3 V-safe voltage-divider circuit, and verify that pressure makes the expected ADC value increase.
+`peak` is the highest reading since the previous frame. The app uses the `hello` pad names to match channels to sensors, so the pin order can change as long as the names stay correct.
 
-To compile with PlatformIO, from this project root:
+To build and flash with PlatformIO:
 
 ```bash
 cd firmware/chokesense_s3_9fsr
-platformio run -e esp32-s3
-platformio run -e esp32-s3 --target upload
+pio run -e esp32-s3 -t upload
 ```
 
-Your ESP32-S3 board must expose the chosen GPIOs. GPIO3 is a boot strapping pin, so ensure the voltage divider does not interfere with reset or boot. GPIO15, GPIO16 and GPIO18 are ADC2 pins, which may conflict with Wi-Fi operation on ESP32-S3. The project uses USB Serial and does not require Wi-Fi. The firmware has not been flashed or tested on your particular board.
-
-## Guided demo
-
-1. Select **Severe choking**.
-2. Follow the highlighted back target. Use **Simulate correct contact** five times.
-3. The trainer advances to the abdominal target for five contacts.
-4. Try off-target sensors to see directional corrections. Off-target actions do not advance progress.
-5. Select **Effective cough** to see the observe-and-encourage scenario; select **Unresponsive / CPR** for the lower-priority sternum placement exercise.
-6. Use **Calibrate** and **Sensor test** for hardware setup.
-
-The animation and feedback classify approximate sensor contact, sequence and location only. They cannot determine adequate physical force, effective obstruction clearance, or CPR depth. This is an educational prototype, not medical certification or a substitute for professional training.
+In the app, click **Connect sensor** and pick the board. Once it has been paired, it reconnects automatically when you plug it back in.
 
 ## Source map
 
-- `src/TrainerExperience.tsx`: single-page React experience, coaching and animated SVG diagram
-- `src/trainerLab/sensors.ts`: named-channel parser and contact/release detector
-- `src/styles.css`: layout and animation styles
-- `firmware/chokesense_s3_9fsr/main.cpp`: nine-FSR ESP32-S3 firmware
+| Path | Contents |
+|---|---|
+| `src/TrainerExperience.tsx` | Main page: scenarios, coaching logic, body diagram, calibration and test tools, Web Serial |
+| `src/trainerLab/sensors.ts` | Serial protocol parser, contact/release detector, ADC → newton conversion |
+| `src/trainerLab/spatialModel.ts` | Placement estimate and heatmap from the sensor readings |
+| `src/trainerLab/grading.ts` | Cough and CPR scoring (pure functions) |
+| `src/trainerLab/instructions.ts` | Step text and spoken cues for each phase |
+| `src/trainerLab/speech.ts` | Gemini TTS with browser cache, Web Speech fallback |
+| `src/trainerLab/assistant.ts` | "Gemini, …" wake word, speech recognition, Q&A |
+| `src/minigames/` | Rhythm skill check game and its scoring engine |
+| `vite.config.ts` | Dev/preview proxy that adds the Gemini key |
+| `firmware/chokesense_s3_9fsr/` | ESP32-S3 firmware (PlatformIO) |
 
-Guidance reference: [2025 AHA Adult Basic Life Support](https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support).
+## Limitations
+
+Thrustworthy measures where you made contact, when, and in what order, along with a rough per-pad force. It cannot tell whether a thrust would clear an airway, and it doesn't measure CPR compression depth. Cough and CPR scoring is still in beta and the thresholds are being tuned. It is an educational prototype, not a certification and not a replacement for hands-on training with an instructor.
+
+Guidance follows the [AHA Adult Basic Life Support guidelines](https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support).
