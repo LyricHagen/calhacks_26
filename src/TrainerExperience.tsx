@@ -59,6 +59,15 @@ type SerialPort = {
   open: (options: { baudRate: number }) => Promise<void>;
   close: () => Promise<void>;
   readable: ReadableStream<Uint8Array> | null;
+  getInfo?: () => { usbVendorId?: number; usbProductId?: number };
+};
+// Espressif's USB vendor ID: the ESP32-S3's native USB port.
+const ESPRESSIF_VID = 0x303a;
+// port.open() can hang when the port is held elsewhere or the board is resetting.
+const OPEN_TIMEOUT_MS = 5000;
+const describePort = (port: SerialPort) => {
+  const info = port.getInfo?.() ?? {};
+  return `${info.usbVendorId?.toString(16) ?? '?'}:${info.usbProductId?.toString(16) ?? '?'}`;
 };
 type SerialApi = {
   requestPort: () => Promise<SerialPort>;
@@ -308,7 +317,9 @@ export function TrainerExperience() {
   const protocol = useRef(new NineSensorProtocol());
   const serialPort = useRef<SerialPort | null>(null);
   const portBusy = useRef(false);
-  const openPortRef = useRef<(port: SerialPort) => Promise<void>>(async () => { });
+  // Bumped for every connection attempt so a stale one that finishes late backs off.
+  const portAttempt = useRef(0);
+  const openPortRef = useRef<(port: SerialPort) => Promise<boolean>>(async () => false);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const readingWindow = useRef<NineReadings[]>([]);
   const latestValues = useRef<NineReadings>(empty());
@@ -860,12 +871,46 @@ export function TrainerExperience() {
     await openPort(port);
   }
 
-  async function openPort(port: SerialPort) {
-    if (portBusy.current) return;
+  // Resolves true once the port is open (reading carries on in the
+  // background), or false if it could not be opened.
+  async function openPort(port: SerialPort): Promise<boolean> {
+    if (portBusy.current) {
+      console.debug('[serial] open skipped: another connection is active');
+      return false;
+    }
     portBusy.current = true;
+    const attempt = ++portAttempt.current;
     setConnection('connecting'); setConnectionDetail('Connecting to the ESP32…');
+    console.debug(`[serial] opening port ${describePort(port)}`);
     try {
-      await port.open({ baudRate: 115200 });
+      await Promise.race([
+        port.open({ baudRate: 115200 }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(
+          'Timed out opening the board. Close any serial monitor (PlatformIO, Arduino IDE), then unplug and replug the ESP32.',
+        )), OPEN_TIMEOUT_MS)),
+      ]);
+    } catch (err) {
+      console.debug('[serial] open failed:', err);
+      if (attempt === portAttempt.current) portBusy.current = false;
+      try { await port.close(); } catch {}
+      if (mounted.current && attempt === portAttempt.current) {
+        setConnection('error');
+        setConnectionDetail(err instanceof Error ? err.message : 'Could not connect to ESP32.');
+      }
+      return false;
+    }
+    if (attempt !== portAttempt.current) {
+      // A newer attempt took over while this one was opening.
+      try { await port.close(); } catch {}
+      return false;
+    }
+    console.debug('[serial] open');
+    void readPort(port, attempt);
+    return true;
+  }
+
+  async function readPort(port: SerialPort, attempt: number) {
+    try {
       serialPort.current = port;
       protocol.current = new NineSensorProtocol();
       setConnection('live'); setConnectionDetail('Connected. Waiting for fsr9-v1 frames.');
@@ -896,35 +941,57 @@ export function TrainerExperience() {
         if (readerRef.current === reader) readerRef.current = null;
         try { await port.close(); } catch {}
         if (serialPort.current === port) serialPort.current = null;
-        if (mounted.current) {
+        // A replaced connection closing late mustn't mark the new one as disconnected.
+        if (mounted.current && attempt === portAttempt.current) {
           setConnection('demo');
           setConnectionDetail('Board disconnected. It reconnects automatically when plugged back in.');
         }
       }
     } catch (err) {
-      if (!mounted.current) return;
-      setConnection(serialPort.current ? 'live' : 'error');
-      setConnectionDetail(err instanceof Error ? err.message : 'Could not connect to ESP32.');
+      console.debug('[serial] read loop ended with error:', err);
+      if (!mounted.current || attempt !== portAttempt.current) return;
+      setConnection('error');
+      setConnectionDetail(err instanceof Error ? err.message : 'Lost the connection to the ESP32.');
     } finally {
-      portBusy.current = false;
+      if (attempt === portAttempt.current) portBusy.current = false;
     }
   }
   openPortRef.current = openPort;
+
+  // Shut the current connection, forcing it if it won't let go, so the next
+  // open never finds the port busy.
+  async function closeCurrent() {
+    try { await readerRef.current?.cancel(); } catch {}
+    for (let waited = 0; portBusy.current && waited < 1500; waited += 50) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (portBusy.current) {
+      console.debug('[serial] previous connection did not close; forcing it');
+      portAttempt.current += 1;
+      try { await serialPort.current?.close(); } catch {}
+      serialPort.current = null;
+      readerRef.current = null;
+      portBusy.current = false;
+    }
+  }
 
   // Always available: drop the current connection (if any) and reopen the
   // approved board, or fall back to the picker if there isn't one.
   async function reconnect() {
     const serial = (navigator as SerialNavigator).serial;
     if (!serial || !paired) { await connect(); return; }
-    try { await readerRef.current?.cancel(); } catch {}
-    // Wait for the read loop to close the port before opening it again.
-    for (let waited = 0; portBusy.current && waited < 3000; waited += 50) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    const ports = await serial.getPorts();
+    setConnection('connecting'); setConnectionDetail('Reconnecting to the ESP32…');
+    await closeCurrent();
+    // Chrome may remember several devices (e.g. the ESP32 seen once in its
+    // download mode); try the Espressif ones first, then the rest.
+    const ports = (await serial.getPorts()).sort((a, b) =>
+      Number(b.getInfo?.().usbVendorId === ESPRESSIF_VID) - Number(a.getInfo?.().usbVendorId === ESPRESSIF_VID));
+    console.debug('[serial] approved ports:', ports.map(describePort));
     if (!mounted.current) return;
-    if (ports[0]) await openPort(ports[0]);
-    else { setPaired(false); await connect(); }
+    if (!ports.length) { setPaired(false); await connect(); return; }
+    for (const port of ports) {
+      if (await openPort(port)) return;
+    }
   }
 
   // Reconnect without a click: on load to a board approved before, and
@@ -1210,7 +1277,7 @@ export function TrainerExperience() {
       <div className="top-actions">
         {speechSupported() && <button type="button" className="connect-button" onClick={toggleVoice} aria-pressed={voiceOn} title="Speak feedback aloud"><Speaker on={voiceOn} />{voiceOn ? 'Voice on' : 'Voice off'}</button>}
         <span className={`connection-pill ${connection}`}><i />{connection === 'live' ? 'ESP32 connected' : connection === 'connecting' ? 'Connecting…' : connection === 'error' ? 'Connection issue' : 'Demo ready'}</span>
-        <button type="button" className="connect-button" onClick={() => { void reconnect(); }} disabled={connection === 'connecting'}><Usb />{paired ? 'Reconnect' : 'Connect sensor'}</button>
+        <button type="button" className="connect-button" onClick={() => { void reconnect(); }}><Usb />{paired ? 'Reconnect' : 'Connect sensor'}</button>
       </div>
     </header>
     <main className={mode === 'train' ? 'container compact-training-page' : 'container'}>

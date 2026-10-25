@@ -25,6 +25,9 @@
 .assessment-hold-strip{position:absolute;height:4px;bottom:3px;left:5px;right:5px;background:#fff9;border-radius:5px}
 .assessment-note.judged{filter:grayscale(1);opacity:.12}
 .assessment-timeline-bottom{font-size:9px;display:flex;align-items:center;justify-content:space-between;padding:7px 14px;color:#92b4a8;letter-spacing:.04em}
+.assessment-switch{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;padding:0 16px;background:#122d2e59;pointer-events:none;animation:assessment-feedback-pop .26s ease-out}
+.assessment-switch strong{color:#ffde97;font-size:20px;letter-spacing:-.03em;text-shadow:0 1px 8px #0b1f20,0 0 2px #0b1f20}
+.assessment-switch span{color:#d3e6df;font-size:11px;line-height:1.4;text-shadow:0 1px 6px #0b1f20,0 0 2px #0b1f20}
 .assessment-verdict{min-height:80px;border-top:1px solid #365552;padding:15px 17px;display:flex;flex-direction:column;justify-content:center;gap:4px;animation:assessment-feedback-pop .26s ease-out}
 .assessment-verdict strong{font-size:24px;color:#bdffe0;letter-spacing:-.035em}
 .assessment-verdict span{color:#adcbc1;font-size:11px;line-height:1.6}
@@ -116,7 +119,6 @@
 .compact-training-page {
   --trainer-gap: 10px;
 }
-.training-shell > .topbar { min-height: 59px; padding-top: 7px; padding-bottom: 7px; }
 /* Remove the former tall gap between the headline, tabs and main panel. */
 .compact-training-page .page-intro {
   padding: 3px 0 5px;
@@ -131,11 +133,10 @@
 .compact-training-page .page-intro .eyebrow { font-size: 8px; }
 .compact-training-page .page-intro p { font-size: 10px; line-height: 1.25; }
 .compact-training-page .intro-note { transform: scale(.88); transform-origin: right center; }
-.compact-training-page .mode-tabs button { padding-bottom: 7px; }
-.compact-training-page .mode-status { padding-bottom: 7px; }
-.compact-training-page .scenario-bar { padding: 7px 0 9px; gap: 10px; }
-.compact-training-page .scenario-buttons button { padding: 6px 10px; }
-.compact-training-page .reset { padding: 6px; }
+/* Header, tabs and scenario bar keep the same size as the other pages; only
+   the panels below are compacted. The page title is hidden here, so give
+   the tabs the breathing room it would have provided. */
+.compact-training-page .modebar { margin-top: 26px; }
 
 /* The original three teaching sections stay in their familiar order.
    Any content taller than the allotted height remains scrollable in-card. */
@@ -324,9 +325,6 @@
   line-height: 1.15;
   margin: 0;
 }
-.compact-training-page .mode-tabs button { padding-bottom: 5px; }
-.compact-training-page .mode-status { padding-bottom: 5px; }
-.compact-training-page .scenario-bar { padding: 7px 0 8px; }
 .compact-training-page .practice-grid.with-bottom-assessment {
   grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
   gap: 11px;
@@ -540,7 +538,6 @@
   .gemini-inline { padding-top: 5px; }
 }
 
-.compact-training-page .scenario-bar { padding-block: 5px; }
 .compact-training-page .page-intro.streamlined-title { padding: 5px 0 2px; }
 .compact-training-page .modebar { margin-bottom: 0; }
 
@@ -834,13 +831,6 @@
 }
 
 
-/* Small header lift and succinct, wrap-safe training copy. */
-.training-shell .topbar {
-  min-height: 94px;
-  padding-block: 13px;
-}
-.training-shell .brandmark { width: 49px; height: 49px; }
-.training-shell .brand strong { font-size: 23px; letter-spacing: -.9px; }
 .compact-training-page .training-assessment-layout {
   min-width: 0;
 }
@@ -874,8 +864,4 @@
   font-size: 9px;
   letter-spacing: .04em;
 }
-@media (max-width: 480px) {
-  .training-shell .topbar { min-height: 78px; }
-  .training-shell .brandmark { width: 41px; height: 41px; }
-  .training-shell .brand strong { font-size: 18px; }
-}
+

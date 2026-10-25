@@ -50,13 +50,19 @@ export const ASSESSMENT_SETTINGS = {
   releaseDebounceMs: 55,
   minimumTapGapMs: 140,
   travelMs: 1800,
+  // Extra pause before the first thrust, on top of noteGapMs, so the trainee
+  // can move from the back to the front of the mannequin.
+  switchGapMs: 4000,
+  // Hide the "moving to thrusts" banner this long before the first thrust,
+  // so its bar is visible as it approaches the hit line.
+  switchBannerLeadMs: 1300,
 } as const;
 
 export function newAssessment(): AssessmentState {
   const notes = Array.from({ length: 10 }, (_, id): AssessmentNote => ({
     id,
     region: id < 5 ? 'back' : 'front',
-    atMs: ASSESSMENT_SETTINGS.firstNoteMs + id * ASSESSMENT_SETTINGS.noteGapMs,
+    atMs: ASSESSMENT_SETTINGS.firstNoteMs + id * ASSESSMENT_SETTINGS.noteGapMs + (id < 5 ? 0 : ASSESSMENT_SETTINGS.switchGapMs),
     targetDurationMs: id < 5 ? ASSESSMENT_SETTINGS.backTargetMs : ASSESSMENT_SETTINGS.frontTargetMs,
   }));
   return { notes, score: 0, combo: 0, maxCombo: 0, feedback: 'Ready to assess', feedbackDetail: 'Five back blows, then five abdominal thrusts.', feedbackId: 0 };

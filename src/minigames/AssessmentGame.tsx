@@ -228,6 +228,11 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
   const judged = state.notes.filter(note => note.verdict).length;
   const beatRemaining = pending ? (pending.atMs - elapsed) / 1000 : 0;
   const outcome = state.feedback.toLowerCase().replace(/\s+/g, '-');
+  // Between the last back blow and the first thrust: time to change position.
+  const firstThrust = state.notes.find(note => note.region === 'front');
+  const switching = status === 'running' && !!firstThrust && !firstThrust.verdict &&
+    state.notes.every(note => note.region === 'front' || note.verdict) &&
+    firstThrust.atMs - elapsed > ASSESSMENT_SETTINGS.switchBannerLeadMs;
 
   return <article className="assessment-panel" aria-label="Heimlich rhythm assessment">
     <div className="assessment-heading">
@@ -288,6 +293,10 @@ export function AssessmentGame({ inputRef, baseline, threshold, spatialSamples, 
           })}
         </div>
         <div className="assessment-timeline-bottom"><span>CONTACT</span><span>↑ Start when bar meets HIT</span></div>
+        {switching && firstThrust && <div className="assessment-switch" role="status" aria-live="polite">
+          <strong>Moving to abdominal thrusts</strong>
+          <span>Stand behind them, fist just above the navel · first thrust in {Math.ceil((firstThrust.atMs - elapsed) / 1000)} s</span>
+        </div>}
       </div>
       <div className={`assessment-verdict ${outcome}`} key={state.feedbackId} role="status" aria-live="polite">
         <strong>{status === 'complete' ? 'FINISHED!' : state.feedback}</strong>
