@@ -2,7 +2,7 @@
 // panel, and a slightly fuller version spoken when the phase starts.
 // Adult technique only; the scenarios don't cover children.
 
-export type GuidePhase = 'back' | 'front' | 'review' | 'cough' | 'cpr';
+export type GuidePhase = 'back' | 'front' | 'review' | 'cough' | 'coughFailing' | 'cpr';
 
 export type PhaseGuide = {
   steps: string[];
@@ -39,26 +39,40 @@ export const PHASE_GUIDES: Record<GuidePhase, PhaseGuide> = {
   },
   cough: {
     steps: [
-      'Do not give back blows or abdominal thrusts',
+      'Encourage them to keep coughing',
+      'Keep your hands off: no back blows or abdominal thrusts',
       'Watch for a weak or silent cough, or trouble breathing',
     ],
     spoken: 'Effective cough. Encourage them to keep coughing, and do not give back blows or thrusts. Watch closely in case the cough gets weak.',
   },
+  coughFailing: {
+    steps: [
+      'The cough has gone weak and silent; they cannot speak',
+      'This is now severe choking: act straight away',
+      'Lean them forward and give a back blow between the shoulder blades',
+    ],
+    spoken: 'The cough is failing. They can no longer cough or speak. Start back blows now.',
+  },
   cpr: {
     steps: [
-      'Call emergency services',
-      'Place the heel of one hand on the centre of the chest',
-      'Put your other hand on top and interlock your fingers',
-      'Practise hand placement on the sternum sensor',
+      'Call emergency services and send for an AED',
+      'Heel of one hand on the centre of the chest, other hand on top',
+      'Push hard and fast: 100 to 120 compressions a minute',
+      'Let the chest come all the way back up after each push',
+      'After 30, give 2 breaths if trained, then continue within 10 seconds',
     ],
-    spoken: 'Unresponsive. Call emergency services. Place the heel of one hand on the centre of the chest, with your other hand on top. Practise your hand placement on the sternum sensor.',
+    spoken: 'Unresponsive. Call emergency services. Put the heel of one hand on the centre of the chest, other hand on top. Push hard and fast, 100 to 120 a minute, and let the chest come all the way back up. Do 30, then continue.',
   },
 };
 
 // Spoken when the fifth good back blow moves the trainee on to thrusts.
 export const BACK_TO_FRONT_CUE = `Five back blows done. ${PHASE_GUIDES.front.spoken}`;
 
+// Spoken at the end of each 30-compression cycle.
+export const CPR_CYCLE_CUE = 'Thirty. Give two breaths if trained, then continue compressions.';
+
 export const GUIDE_CUES = [
   ...Object.values(PHASE_GUIDES).map(guide => guide.spoken),
   BACK_TO_FRONT_CUE,
+  CPR_CYCLE_CUE,
 ];

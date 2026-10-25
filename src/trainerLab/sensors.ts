@@ -264,6 +264,11 @@ const GROUPS: Group[] = [
   { type: 'cpr', ids: [8] },
 ];
 
+// Signal above baseline a hit must fall below to count as released.
+export function releaseLevel(contactDelta = RAW_THRESHOLD): number {
+  return Math.max(30, Math.max(1, contactDelta) * 0.38);
+}
+
 type DetectorState = {
   active: boolean;
   peak: number;
@@ -397,7 +402,7 @@ export class NineSensorDetector {
   ): DetectedAction[] {
     const events: DetectedAction[] = [];
     const threshold = Math.max(1, contactDelta);
-    const releaseThreshold = Math.max(30, threshold * 0.38);
+    const releaseThreshold = releaseLevel(threshold);
 
     GROUPS.forEach((group, index) => {
       const state = this.states[index];
